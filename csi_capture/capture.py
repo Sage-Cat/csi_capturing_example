@@ -11,30 +11,27 @@ from typing import IO, Iterable, Optional, TextIO
 from csi_capture.parser import CSIRecord, parse_csi_line
 
 
-def _record_to_dict(record: CSIRecord) -> dict:
-    return {
+def _record_to_dict(record: CSIRecord, metadata: Optional[dict] = None) -> dict:
+    row = {
         "timestamp": record.timestamp,
         "rssi": record.rssi,
         "csi": record.csi,
         "esp_timestamp": record.esp_timestamp,
         "mac": record.mac,
     }
+    if metadata:
+        row.update(metadata)
+    return row
 
 
-def _write_jsonl(f: TextIO, record: CSIRecord) -> None:
-    f.write(json.dumps(_record_to_dict(record), separators=(",", ":")) + "\n")
+def _write_jsonl(f: TextIO, record: CSIRecord, metadata: Optional[dict] = None) -> None:
+    f.write(json.dumps(_record_to_dict(record, metadata=metadata), separators=(",", ":")) + "\n")
 
 
-def _write_csv(writer: csv.DictWriter, record: CSIRecord) -> None:
-    writer.writerow(
-        {
-            "timestamp": record.timestamp,
-            "rssi": record.rssi,
-            "csi": json.dumps(record.csi, separators=(",", ":")),
-            "esp_timestamp": record.esp_timestamp,
-            "mac": record.mac,
-        }
-    )
+def _write_csv(writer: csv.DictWriter, record: CSIRecord, metadata: Optional[dict] = None) -> None:
+    row = _record_to_dict(record, metadata=metadata)
+    row["csi"] = json.dumps(record.csi, separators=(",", ":"))
+    writer.writerow(row)
 
 
 def capture_stream(
@@ -42,11 +39,17 @@ def capture_stream(
     out: IO[str],
     output_format: str = "jsonl",
     max_records: Optional[int] = None,
+    metadata: Optional[dict] = None,
 ) -> int:
     csv_writer = None
     if output_format == "csv":
+        fieldnames = ["timestamp", "rssi", "csi", "esp_timestamp", "mac"]
+        if metadata:
+            for key in metadata.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
         csv_writer = csv.DictWriter(
-            out, fieldnames=["timestamp", "rssi", "csi", "esp_timestamp", "mac"]
+            out, fieldnames=fieldnames
         )
         csv_writer.writeheader()
 
@@ -58,9 +61,9 @@ def capture_stream(
             continue
 
         if output_format == "jsonl":
-            _write_jsonl(out, record)
+            _write_jsonl(out, record, metadata=metadata)
         else:
-            _write_csv(csv_writer, record)
+            _write_csv(csv_writer, record, metadata=metadata)
 
         written += 1
         if max_records and written >= max_records:
@@ -112,6 +115,10 @@ def main() -> int:
         default=None,
         help="Stop after N parsed CSI records",
     )
+    parser.add_argument("--exp-id", default=None, help="Experiment identifier")
+    parser.add_argument("--scenario", default=None, help="Scenario label (LoS/NLoS_*)")
+    parser.add_argument("--run-id", type=int, default=None, help="Run index, e.g. 1..3")
+    parser.add_argument("--distance-m", type=float, default=None, help="Ground-truth distance in meters")
     args = parser.parse_args()
 
     output_path = Path(args.output)
@@ -133,6 +140,14 @@ def main() -> int:
         f"Writing {args.format} to {output_path}. Press Ctrl+C to stop."
     )
 
+    metadata = {
+        "exp_id": args.exp_id,
+        "scenario": args.scenario,
+        "run_id": args.run_id,
+        "distance_m": args.distance_m,
+    }
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+
     written = 0
     try:
         with output_path.open("w", encoding="utf-8", newline="") as out:
@@ -141,7 +156,11 @@ def main() -> int:
                 out=out,
                 output_format=args.format,
                 max_records=args.max_records,
+                metadata=metadata,
             )
+    except RuntimeError as err:
+        print(f"Error: {err}")
+        return 2
     except KeyboardInterrupt:
         pass
 

@@ -34,7 +34,24 @@ class CaptureStreamTests(unittest.TestCase):
         self.assertEqual(len(text), 2)  # header + one row
         self.assertIn("timestamp,rssi,csi,esp_timestamp,mac", text[0])
 
+    def test_capture_jsonl_with_metadata(self):
+        lines = [
+            'CSI_DATA,2,aa:bb:cc:dd:ee:ff,-30,11,1,0,1,1,1,0,0,0,0,-97,0,11,2,10,0,47,0,384,0,"[5,6,-7]"\n',
+        ]
+        out = io.StringIO()
+        written = capture_stream(
+            lines,
+            out,
+            output_format="jsonl",
+            metadata={"exp_id": "exp01", "scenario": "LoS", "run_id": 1, "distance_m": 2.0},
+        )
+        self.assertEqual(written, 1)
+        payload = json.loads(out.getvalue().strip())
+        self.assertEqual(payload["exp_id"], "exp01")
+        self.assertEqual(payload["scenario"], "LoS")
+        self.assertEqual(payload["run_id"], 1)
+        self.assertEqual(payload["distance_m"], 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
-
