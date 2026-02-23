@@ -1,0 +1,40 @@
+import io
+import json
+import unittest
+
+from csi_capture.capture import capture_stream
+
+
+class CaptureStreamTests(unittest.TestCase):
+    def test_capture_jsonl_only_csi_lines(self):
+        lines = [
+            "I (123) csi_recv: compensate_gain 4.3\n",
+            'CSI_DATA,2,aa:bb:cc:dd:ee:ff,-30,11,1,0,1,1,1,0,0,0,0,-97,0,11,2,10,0,47,0,384,0,"[5,6,-7]"\n',
+            "random line\n",
+        ]
+
+        out = io.StringIO()
+        written = capture_stream(lines, out, output_format="jsonl")
+        self.assertEqual(written, 1)
+
+        payload = json.loads(out.getvalue().strip())
+        self.assertIn("timestamp", payload)
+        self.assertEqual(payload["rssi"], -30)
+        self.assertEqual(payload["csi"], [5, 6, -7])
+
+    def test_capture_csv_with_max_records(self):
+        lines = [
+            'CSI_DATA,2,aa:bb:cc:dd:ee:ff,-30,11,1,0,1,1,1,0,0,0,0,-97,0,11,2,10,0,47,0,384,0,"[1]"\n',
+            'CSI_DATA,3,aa:bb:cc:dd:ee:11,-31,11,1,0,1,1,1,0,0,0,0,-97,0,11,2,10,0,47,0,384,0,"[2]"\n',
+        ]
+        out = io.StringIO()
+        written = capture_stream(lines, out, output_format="csv", max_records=1)
+        self.assertEqual(written, 1)
+        text = out.getvalue().splitlines()
+        self.assertEqual(len(text), 2)  # header + one row
+        self.assertIn("timestamp,rssi,csi,esp_timestamp,mac", text[0])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
