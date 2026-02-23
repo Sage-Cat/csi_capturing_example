@@ -29,6 +29,7 @@ IDF_PATH="${IDF_PATH:-$IDF_PATH_DEFAULT}"
 ESP_CSI_PATH="${ESP_CSI_PATH:-$ESP_CSI_PATH_DEFAULT}"
 
 OUT_FILE=""
+EXP_ROOT="$REPO_ROOT/experiments"
 
 usage() {
   cat <<'EOF'
@@ -56,6 +57,7 @@ Device/build options:
 Output/options:
   --format <jsonl|csv>     Output format (default: jsonl)
   --out <path>             Output file override
+  --exp-root <path>        Experiment root directory (default: <repo>/experiments)
 
 Meta options (written to meta.json):
   --channel <num>          Wi-Fi channel (default: 11)
@@ -83,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --skip-flash) FLASH=0; shift ;;
     --format) FORMAT="$2"; shift 2 ;;
     --out) OUT_FILE="$2"; shift 2 ;;
+    --exp-root) EXP_ROOT="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
     --bandwidth-mhz) BANDWIDTH_MHZ="$2"; shift 2 ;;
     --packet-rate-hz) PACKET_RATE_HZ="$2"; shift 2 ;;
@@ -109,14 +112,15 @@ if [[ ! -d "$RECV_DIR" ]]; then
 fi
 
 DISTANCE_TAG="${DISTANCE_M//./p}"
-BASE_DIR="$REPO_ROOT/data/experiments/$EXP_ID/$SCENARIO/run_${RUN_ID}"
+BASE_DIR="$EXP_ROOT/$EXP_ID/$SCENARIO/run_${RUN_ID}"
 mkdir -p "$BASE_DIR"
 
 if [[ -z "$OUT_FILE" ]]; then
   OUT_FILE="$BASE_DIR/distance_${DISTANCE_TAG}m.$FORMAT"
 fi
 
-META_FILE="$REPO_ROOT/data/experiments/$EXP_ID/meta.json"
+META_FILE="$EXP_ROOT/$EXP_ID/meta.json"
+mkdir -p "$(dirname "$META_FILE")"
 if [[ ! -f "$META_FILE" ]]; then
   cat > "$META_FILE" <<EOF
 {
@@ -171,4 +175,3 @@ fi
 echo "RX capture complete: $RECORDS_CAPTURED records"
 echo "Output: $OUT_FILE"
 echo "Meta:   $META_FILE"
-

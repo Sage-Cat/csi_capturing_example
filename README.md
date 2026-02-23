@@ -1,16 +1,29 @@
-# ESP32 CSI Experiment Toolkit (2 Laptops, 2 Boards)
+# ESP32 CSI/RSSI Experiment Toolkit
 
-This repository is prepared for the experiment workflow:
+Toolkit for capturing ESP32 CSI packets, organizing experiment runs, and producing RSSI/CSI analysis reports.
 
-- **Laptop A (TX node):** flash/run `csi_send` on one ESP32-S3
-- **Laptop B (RX node):** flash/run `csi_recv`, capture structured CSI data
+Primary workflow:
 
-Important for this setup:
+- Laptop A (TX): flash/run `csi_send`
+- Laptop B (RX): flash/run `csi_recv`, capture CSI stream, attach experiment metadata
 
-- ESP32-S3 is used on **2.4 GHz only**
-- Use fixed channel (e.g. 1/6/11) in firmware
+## Repository Layout
 
-## 1) System Dependencies (both laptops)
+```text
+csi_capture/              # Python capture/parser modules
+scripts/                  # Operational scripts (TX/RX, local setup)
+tools/                    # Analysis scripts
+tests/                    # Unit tests
+docs/                     # Analysis notes and methodology docs
+experiments/              # Local raw runs (git-ignored except README/.gitkeep)
+out/                      # Local generated figures/tables/reports (git-ignored except README/.gitkeep)
+data/                     # Small reusable sample data only
+.vscode.template/         # Tracked VS Code defaults copied to local .vscode/
+```
+
+`experiments/`, `out/`, build files, and `.vscode/` are intentionally ignored so students can run scripts locally without polluting git history.
+
+## 1) System Dependencies (Both Laptops)
 
 ```bash
 sudo apt update
@@ -20,9 +33,9 @@ sudo apt install -y \
 sudo usermod -a -G dialout $USER
 ```
 
-Logout/login after adding `dialout`.
+Log out and log in again after adding `dialout`.
 
-## 2) ESP-IDF + esp-csi (both laptops)
+## 2) ESP-IDF + esp-csi Setup
 
 ```bash
 mkdir -p ~/esp
@@ -32,50 +45,49 @@ cd esp-idf
 ./install.sh esp32s3
 ```
 
-Optional convenience alias:
+Optional helper alias:
 
 ```bash
 echo "alias get_idf='. $HOME/esp/esp-idf/export.sh'" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Clone esp-csi:
+Clone `esp-csi`:
 
 ```bash
 cd ~/esp
 git clone https://github.com/espressif/esp-csi.git
 ```
 
-## 3) This repository (both laptops)
+## 3) Project Setup
 
 ```bash
-cd ~
 git clone git@github.com:Sage-Cat/csi_capturing_example.git
 cd csi_capturing_example
-pip3 install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
-## 4) Two Commands for Two Laptops
-
-### Laptop A (TX) command
-
-Connect TX ESP board, then run:
+Optional local VS Code bootstrap:
 
 ```bash
-cd ~/csi_capturing_example
+./scripts/setup_vscode.sh
+```
+
+This copies tracked templates from `.vscode.template/` to your local ignored `.vscode/`.
+
+## 4) Capture Commands
+
+TX node:
+
+```bash
 ./scripts/run_tx_laptop.sh --port /dev/ttyACM0
 ```
 
-This builds/flashes `csi_send` and leaves the transmitter running.
-
-### Laptop B (RX) command
-
-Connect RX ESP board, then run:
+RX node:
 
 ```bash
-cd ~/csi_capturing_example
 ./scripts/run_rx_laptop.sh \
-  --port /dev/ttyACM0 \
+  --port /dev/ttyACM1 \
   --exp-id exp_2026_02_23_lab \
   --scenario LoS \
   --run-id 1 \
@@ -83,48 +95,58 @@ cd ~/csi_capturing_example
   --max-records 2500
 ```
 
-This builds/flashes `csi_recv`, captures CSI records, and stores experiment outputs.
+By default, RX output is stored under `experiments/<exp_id>/...`.
 
-## 5) Output Data Structure
+## 5) Experiment Data Structure
 
-Records are stored as JSONL (or CSV if requested) with at least:
+Each captured row stores:
 
-- `timestamp` (host Unix time in ms)
+- `timestamp` (host Unix ms)
 - `rssi`
 - `csi` (I/Q integer array)
 - `esp_timestamp`
 - `mac`
+- plus metadata tags (`exp_id`, `scenario`, `run_id`, `distance_m`)
 
-Experiment tags (from CLI) are attached to each row:
-
-- `exp_id`
-- `scenario`
-- `run_id`
-- `distance_m`
-
-Example row:
+Example:
 
 ```json
 {"timestamp":1700000000000,"rssi":-15,"csi":[1,-2,3,-4],"esp_timestamp":119050,"mac":"1a:00:00:00:00:00","exp_id":"exp_2026_02_23_lab","scenario":"LoS","run_id":1,"distance_m":1.0}
 ```
 
-Experiment files:
+Layout:
 
-- `data/experiments/<exp_id>/meta.json`
-- `data/experiments/<exp_id>/<scenario>/run_<run_id>/distance_<X>m.jsonl`
+- `experiments/<exp_id>/meta.json`
+- `experiments/<exp_id>/<scenario>/run_<run_id>/distance_<X>m.jsonl`
 
-## 6) Local Smoke Test (single laptop with 2 boards)
+## 6) Analysis Commands
 
-If both boards are connected to one laptop:
+Distance measurement:
 
 ```bash
-cd ~/csi_capturing_example
-./scripts/run_tx_laptop.sh --port /dev/ttyACM0
-./scripts/run_rx_laptop.sh --port /dev/ttyACM1 --scenario LoS --run-id 1 --distance-m 1.0 --max-records 20
+python3 tools/analyze_wifi_distance_measurement.py \
+  --data_dir experiments/<exp_id> \
+  --out_dir out/distance_measurement
 ```
 
-## 7) Tests
+Stability statistics:
 
 ```bash
+python3 tools/analyze_wifi_stability_statistics.py \
+  --data_dir experiments/<exp_id> \
+  --out_dir out/stability_statistics
+```
+
+Outputs are written to `out/` and are git-ignored.
+
+## 7) Make Targets
+
+```bash
+make setup-vscode
 make test
+make tx-node PORT=/dev/ttyACM0
+make rx-smoke PORT=/dev/ttyACM1 EXP_ID=exp_smoke
+make analyze-distance DATA_DIR=experiments/<exp_id>
+make analyze-stability DATA_DIR=experiments/<exp_id>
+make analyze-all DATA_DIR=experiments/<exp_id>
 ```
