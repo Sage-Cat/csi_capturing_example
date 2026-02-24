@@ -46,6 +46,11 @@ def capture_stream(
     max_records: Optional[int] = None,
     metadata: Optional[dict] = None,
 ) -> int:
+    if output_format not in {"jsonl", "csv"}:
+        raise ValueError(f"Unsupported output_format: {output_format}")
+    if max_records is not None and max_records < 0:
+        raise ValueError("max_records must be >= 0")
+
     csv_writer = None
     if output_format == "csv":
         fieldnames = ["timestamp", "rssi", "csi", "esp_timestamp", "mac"]
@@ -60,6 +65,9 @@ def capture_stream(
 
     written = 0
     for line in lines:
+        if max_records is not None and written >= max_records:
+            break
+
         ts = int(time.time() * 1000)
         record = parse_csi_line(line, timestamp=ts)
         if record is None:
@@ -68,11 +76,11 @@ def capture_stream(
         if output_format == "jsonl":
             _write_jsonl(out, record, metadata=metadata)
         else:
+            if csv_writer is None:
+                raise RuntimeError("CSV writer was not initialized")
             _write_csv(csv_writer, record, metadata=metadata)
 
         written += 1
-        if max_records and written >= max_records:
-            break
 
     return written
 

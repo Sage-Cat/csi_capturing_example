@@ -52,6 +52,23 @@ class CaptureStreamTests(unittest.TestCase):
         self.assertEqual(payload["run_id"], 1)
         self.assertEqual(payload["distance_m"], 2.0)
 
+    def test_capture_jsonl_with_zero_max_records(self):
+        lines = [
+            'CSI_DATA,2,aa:bb:cc:dd:ee:ff,-30,11,1,0,1,1,1,0,0,0,0,-97,0,11,2,10,0,47,0,384,0,"[5,6,-7]"\n',
+        ]
+        out = io.StringIO()
+        written = capture_stream(lines, out, output_format="jsonl", max_records=0)
+        self.assertEqual(written, 0)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_capture_rejects_invalid_output_format(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported output_format"):
+            capture_stream([], io.StringIO(), output_format="yaml")
+
+    def test_capture_rejects_negative_max_records(self):
+        with self.assertRaisesRegex(ValueError, "max_records must be >= 0"):
+            capture_stream([], io.StringIO(), output_format="jsonl", max_records=-1)
+
 
 if __name__ == "__main__":
     unittest.main()
