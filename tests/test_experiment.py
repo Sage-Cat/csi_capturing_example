@@ -1,9 +1,14 @@
+import argparse
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from csi_capture.experiment import ExperimentConfigError, load_experiment_config
+from csi_capture.experiment import (
+    ExperimentConfigError,
+    build_angle_cli_config,
+    load_experiment_config,
+)
 
 
 class ExperimentConfigTests(unittest.TestCase):
@@ -12,6 +17,36 @@ class ExperimentConfigTests(unittest.TestCase):
             path = Path(tmp_dir) / "config.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
             return load_experiment_config(path)
+
+    def _angle_cli_args(self, **overrides):
+        base = dict(
+            config=None,
+            device="/dev/esp32_csi",
+            exp_id="exp_angle_cli",
+            run_id=None,
+            run_ids=None,
+            runs=2,
+            angles=["0", "45", "90"],
+            repeats_per_angle=1,
+            packets_per_repeat=50,
+            duration_s=None,
+            output_format="jsonl",
+            inter_trial_pause_s=5.0,
+            scenario_tags=["LoS"],
+            room_id="room1",
+            notes="notes",
+            num_antennas=1,
+            antenna_spacing_m=None,
+            orientation_reference="0 deg points to AP",
+            measurement_positions="AP center, RX on circle",
+            output_root="experiments",
+            baud=921600,
+            timeout_s=1.0,
+            reconnect_on_error=False,
+            reconnect_delay_s=1.0,
+        )
+        base.update(overrides)
+        return argparse.Namespace(**base)
 
     def test_angle_config_builds_trials(self):
         payload = {
@@ -147,6 +182,20 @@ class ExperimentConfigTests(unittest.TestCase):
         }
         with self.assertRaises(ExperimentConfigError):
             self._load(payload)
+
+    def test_build_angle_cli_config_generates_runs(self):
+        args = self._angle_cli_args()
+        raw = build_angle_cli_config(args)
+        self.assertEqual(raw["experiment_type"], "angle")
+        self.assertEqual(raw["run_ids"], ["001", "002"])
+        _raw, config = self._load(raw)
+        self.assertEqual(config.run_ids, ["001", "002"])
+        self.assertEqual(len(config.trials), 3)
+
+    def test_build_angle_cli_config_requires_angles(self):
+        args = self._angle_cli_args(angles=None)
+        with self.assertRaises(ExperimentConfigError):
+            build_angle_cli_config(args)
 
 
 if __name__ == "__main__":

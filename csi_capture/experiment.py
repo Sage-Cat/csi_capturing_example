@@ -171,6 +171,104 @@ def _normalize_run_ids(run_id: str, run_ids_raw: Any) -> list[str]:
     return normalized
 
 
+def _split_cli_values(values: Optional[list[str]]) -> list[str]:
+    if not values:
+        return []
+
+    tokens: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        for chunk in str(value).split(","):
+            token = chunk.strip()
+            if token:
+                tokens.append(token)
+    return tokens
+
+
+def build_angle_cli_config(args: argparse.Namespace) -> dict[str, Any]:
+    exp_id = str(args.exp_id or "").strip()
+    if not exp_id:
+        raise ExperimentConfigError(
+            "angle CLI mode requires --exp-id when --config is not provided."
+        )
+
+    angle_tokens = _split_cli_values(args.angles)
+    if not angle_tokens:
+        raise ExperimentConfigError(
+            "angle CLI mode requires --angles when --config is not provided."
+        )
+    angles = [
+        _require_float(token, f"--angles[{idx}]") for idx, token in enumerate(angle_tokens, start=1)
+    ]
+
+    run_ids_tokens = _split_cli_values(args.run_ids)
+    run_id = str(args.run_id or "").strip()
+    if args.runs is not None and (run_ids_tokens or run_id):
+        raise ExperimentConfigError("Use only one of --runs, --run-id, or --run-ids.")
+    if run_ids_tokens and run_id:
+        raise ExperimentConfigError("Use either --run-id or --run-ids, not both.")
+
+    if args.runs is not None:
+        run_count = _require_positive_int(args.runs, "--runs")
+        run_ids = [f"{idx:03d}" for idx in range(1, run_count + 1)]
+    elif run_ids_tokens:
+        run_ids = _normalize_run_ids(run_ids_tokens[0], run_ids_tokens)
+    elif run_id:
+        run_ids = [run_id]
+    else:
+        run_ids = ["001"]
+
+    packets_per_repeat = args.packets_per_repeat
+    duration_s = args.duration_s
+    if packets_per_repeat is None and duration_s is None:
+        raise ExperimentConfigError(
+            "angle CLI mode requires --packets-per-repeat or --duration-s."
+        )
+
+    device_path = str(args.device).strip() if args.device is not None else "/dev/esp32_csi"
+    if not device_path:
+        device_path = "/dev/esp32_csi"
+
+    return {
+        "experiment_type": "angle",
+        "exp_id": exp_id,
+        "run_id": run_ids[0],
+        "run_ids": run_ids,
+        "output_root": str(args.output_root or "experiments").strip() or "experiments",
+        "scenario_tags": _split_cli_values(args.scenario_tags),
+        "environment": {
+            "room_id": str(args.room_id or "").strip(),
+            "notes": str(args.notes or "").strip(),
+        },
+        "device": {
+            "path": device_path,
+            "baud": args.baud,
+            "timeout_s": args.timeout_s,
+            "reconnect_on_error": bool(args.reconnect_on_error),
+            "reconnect_delay_s": args.reconnect_delay_s,
+        },
+        "capture": {
+            "output_format": args.output_format,
+            "packets_per_repeat": packets_per_repeat,
+            "duration_s": duration_s,
+            "inter_trial_pause_s": args.inter_trial_pause_s,
+        },
+        "angle": {
+            "angles": angles,
+            "repeats_per_angle": args.repeats_per_angle,
+            "array_config": {
+                "num_antennas": args.num_antennas,
+                "antenna_spacing_m": args.antenna_spacing_m,
+            },
+            "geometry": {
+                "orientation_reference": str(args.orientation_reference or "").strip(),
+                "measurement_positions": str(args.measurement_positions or "").strip(),
+            },
+        },
+    }
+
+
 def _build_distance_trials(distance_cfg: dict[str, Any]) -> list[TrialSpec]:
     distances = distance_cfg.get("distances_m")
     if not isinstance(distances, list) or not distances:
@@ -505,10 +603,12 @@ def _write_manifest(manifest_path: Path, manifest: dict[str, Any]) -> None:
         handle.write("\n")
 
 
-def run_config(
-    config_path: Path, expected_type: Optional[str] = None, device_override: Optional[str] = None
+def run_raw_config(
+    raw_config: dict[str, Any], expected_type: Optional[str] = None, device_override: Optional[str] = None
 ) -> int:
-    raw_config, config = load_experiment_config(config_path)
+    if not isinstance(raw_config, dict):
+        raise ExperimentConfigError("Top-level config must be a JSON object.")
+    config = _normalize_config(raw_config)
     if expected_type is not None and config.experiment_type != expected_type:
         raise ExperimentConfigError(
             f"Config experiment_type is '{config.experiment_type}', expected '{expected_type}'."
@@ -656,6 +756,13 @@ def run_config(
     return 0
 
 
+def run_config(
+    config_path: Path, expected_type: Optional[str] = None, device_override: Optional[str] = None
+) -> int:
+    raw_config, _ = load_experiment_config(config_path)
+    return run_raw_config(raw_config, expected_type=expected_type, device_override=device_override)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run config-driven CSI experiments (distance or angle)."
@@ -678,12 +785,140 @@ def _parser() -> argparse.ArgumentParser:
         help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
     )
 
-    angle_parser = sub.add_parser("angle", help="Run angle experiment config.")
-    angle_parser.add_argument("--config", required=True, help="Path to experiment config JSON.")
+    angle_parser = sub.add_parser(
+        "angle",
+        help="Run angle experiment from JSON config or fully from CLI flags.",
+    )
+    angle_parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to experiment config JSON (optional when using CLI flags).",
+    )
     angle_parser.add_argument(
         "--device",
         default=None,
-        help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
+        help="Serial device path (CLI mode) or config override. Use 'auto' to auto-detect.",
+    )
+    angle_parser.add_argument("--exp-id", default=None, help="Experiment id (required in CLI mode).")
+    angle_parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Single run id for CLI mode (default: 001 if run flags are omitted).",
+    )
+    angle_parser.add_argument(
+        "--run-ids",
+        nargs="+",
+        default=None,
+        help="Multiple run ids in CLI mode, space/comma separated (e.g. 001 002).",
+    )
+    angle_parser.add_argument(
+        "--runs",
+        type=int,
+        default=None,
+        help="Generate run ids 001..N in CLI mode (e.g. --runs 2).",
+    )
+    angle_parser.add_argument(
+        "--angles",
+        nargs="+",
+        default=None,
+        help="Angle degrees for CLI mode, space/comma separated (e.g. 0 45 90).",
+    )
+    angle_parser.add_argument(
+        "--repeats-per-angle",
+        type=int,
+        default=1,
+        help="Repeats per angle in CLI mode (default: 1).",
+    )
+    capture_budget_group = angle_parser.add_mutually_exclusive_group(required=False)
+    capture_budget_group.add_argument(
+        "--packets-per-repeat",
+        type=int,
+        default=None,
+        help="Packets to capture per trial in CLI mode.",
+    )
+    capture_budget_group.add_argument(
+        "--duration-s",
+        type=float,
+        default=None,
+        help="Capture duration per trial in seconds (CLI mode).",
+    )
+    angle_parser.add_argument(
+        "--output-format",
+        choices=sorted(SUPPORTED_OUTPUT_FORMATS),
+        default="jsonl",
+        help="Output format in CLI mode (default: jsonl).",
+    )
+    angle_parser.add_argument(
+        "--inter-trial-pause-s",
+        type=float,
+        default=0.0,
+        help="Pause between trials in seconds for CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--scenario-tags",
+        nargs="+",
+        default=None,
+        help="Scenario tags in CLI mode, space/comma separated.",
+    )
+    angle_parser.add_argument(
+        "--room-id",
+        default="",
+        help="Environment room id in CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--notes",
+        default="",
+        help="Environment notes in CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--num-antennas",
+        type=int,
+        default=1,
+        help="Array metadata: number of antennas (CLI mode).",
+    )
+    angle_parser.add_argument(
+        "--antenna-spacing-m",
+        type=float,
+        default=None,
+        help="Array metadata: antenna spacing in meters (optional, CLI mode).",
+    )
+    angle_parser.add_argument(
+        "--orientation-reference",
+        default="0 deg points from receiver front toward AP",
+        help="Geometry metadata for CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--measurement-positions",
+        default="AP fixed in center, receiver moved between angle marks",
+        help="Geometry metadata for CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--output-root",
+        default="experiments",
+        help="Output root directory in CLI mode (default: experiments).",
+    )
+    angle_parser.add_argument(
+        "--baud",
+        type=int,
+        default=921600,
+        help="Serial baud in CLI mode (default: 921600).",
+    )
+    angle_parser.add_argument(
+        "--timeout-s",
+        type=float,
+        default=1.0,
+        help="Serial timeout in CLI mode (default: 1.0).",
+    )
+    angle_parser.add_argument(
+        "--reconnect-on-error",
+        action="store_true",
+        help="Enable serial reconnect on read errors in CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--reconnect-delay-s",
+        type=float,
+        default=1.0,
+        help="Reconnect delay in seconds for CLI mode (default: 1.0).",
     )
 
     return parser
@@ -696,18 +931,28 @@ def main() -> int:
         parser.print_help()
         return 2
 
-    config_path = Path(args.config)
-    if not config_path.exists():
-        print(f"Error: config file does not exist: {config_path}")
-        return 2
-
     try:
         if args.command == "run":
+            config_path = Path(args.config)
+            if not config_path.exists():
+                print(f"Error: config file does not exist: {config_path}")
+                return 2
             return run_config(config_path, device_override=args.device)
         if args.command == "distance":
+            config_path = Path(args.config)
+            if not config_path.exists():
+                print(f"Error: config file does not exist: {config_path}")
+                return 2
             return run_config(config_path, expected_type="distance", device_override=args.device)
         if args.command == "angle":
-            return run_config(config_path, expected_type="angle", device_override=args.device)
+            if args.config:
+                config_path = Path(args.config)
+                if not config_path.exists():
+                    print(f"Error: config file does not exist: {config_path}")
+                    return 2
+                return run_config(config_path, expected_type="angle", device_override=args.device)
+            raw_config = build_angle_cli_config(args)
+            return run_raw_config(raw_config, expected_type="angle", device_override=None)
         print(f"Error: unknown command {args.command}")
         return 2
     except ExperimentConfigError as err:

@@ -122,20 +122,34 @@ New unified config-driven runner (distance + angle):
 python3 -m csi_capture.experiment distance \
   --config docs/configs/distance_capture.sample.json
 
-# Angle/AoA dataset capture from config
+# Angle/AoA dataset capture directly from CLI (no JSON editing)
 python3 -m csi_capture.experiment angle \
-  --config docs/configs/angle_capture.sample.json
+  --exp-id exp_angle_radial_demo \
+  --runs 2 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --repeats-per-angle 1 \
+  --packets-per-repeat 300 \
+  --scenario-tags LoS \
+  --room-id room_a \
+  --notes "AP center, RX on circle R=2m" \
+  --num-antennas 1 \
+  --device /dev/esp32_csi
 
-# Radial angle sweep around AP center: 0,45,...,315 with 2 runs
+# Same idea, but with explicit run ids
 python3 -m csi_capture.experiment angle \
-  --config docs/configs/angle_radial_45deg_2runs.sample.json
+  --exp-id exp_angle_radial_demo \
+  --run-ids 001 002 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --packets-per-repeat 300 \
+  --scenario-tags LoS \
+  --room-id room_a \
+  --notes "AP center, RX on circle R=2m" \
+  --num-antennas 1
 ```
 
-Config defaults use auto serial selection (`device.path: "auto"`), preferring `/dev/esp32_csi`
-when available and falling back to detected serial candidates (`/dev/ttyACM*`, `/dev/cu.usbmodem*`, etc.).
-`run_ids` can be set in config to execute multiple full sweeps in one command.
-For cross-platform use (including macOS), angle configs now use `device.path: "auto"` and
-you can always override from CLI:
+Angle CLI defaults to `/dev/esp32_csi`. Use `--device auto` for cross-platform auto-detection
+(`/dev/esp32_csi`, `/dev/ttyACM*`, `/dev/cu.usbmodem*`, etc.). JSON configs for `angle`
+are still supported for backward compatibility:
 
 ```bash
 python3 -m csi_capture.experiment angle \

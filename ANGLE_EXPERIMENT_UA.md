@@ -7,7 +7,7 @@
 - Тип: `angle`
 - Кути: `0, 45, 90, 135, 180, 225, 270, 315`
 - Кількість прогонів: `2` (`run_001` і `run_002`)
-- Конфіг: `docs/configs/angle_radial_45deg_2runs.sample.json`
+- Налаштування задаються прямо через командний рядок (без редагування JSON)
 
 ## 2) Обладнання
 
@@ -134,7 +134,16 @@ cd /home/sagecat/Projects/csi_capture
 ```bash
 cd /home/sagecat/Projects/csi_capture
 python3 -m csi_capture.experiment angle \
-  --config docs/configs/angle_radial_45deg_2runs.sample.json \
+  --exp-id exp_angle_20260302 \
+  --runs 2 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --repeats-per-angle 1 \
+  --packets-per-repeat 300 \
+  --inter-trial-pause-s 12 \
+  --scenario-tags LoS \
+  --room-id room_empty \
+  --notes "AP по центру, RX по колу радіусом 2м" \
+  --num-antennas 1 \
   --device auto
 ```
 
@@ -144,15 +153,19 @@ python3 -m csi_capture.experiment angle \
 
 ```bash
 python3 -m csi_capture.experiment angle \
-  --config docs/configs/angle_radial_45deg_2runs.sample.json \
+  --exp-id exp_angle_20260302 \
+  --runs 2 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --packets-per-repeat 300 \
+  --num-antennas 1 \
   --device /dev/cu.usbmodem1101
 ```
 
 ## 6) Протокол проведення під час запису
 
-У конфігу вже задано:
+У прикладі вище задано:
 
-- `run_ids`: `["001", "002"]`
+- `--runs 2` (це `run_001` та `run_002`)
 - `inter_trial_pause_s`: `12` секунд
 
 Що це означає на практиці:
@@ -167,7 +180,33 @@ python3 -m csi_capture.experiment angle \
 
 - Після перестановки відійди від пристрою, не стоячи між TX і RX.
 
-## 7) Де лежать результати
+## 7) Швидкі приклади параметрів (без JSON)
+
+Вказати конкретні `run_id` вручну:
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --exp-id exp_angle_manual_runs \
+  --run-ids 01 02 \
+  --angles 0 45 90 135 180 \
+  --packets-per-repeat 250 \
+  --num-antennas 1 \
+  --device /dev/esp32_csi
+```
+
+Один запуск з довжиною по часу замість кількості пакетів:
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --exp-id exp_angle_duration_mode \
+  --run-id testA \
+  --angles 0 90 180 270 \
+  --duration-s 10 \
+  --num-antennas 1 \
+  --device /dev/esp32_csi
+```
+
+## 8) Де лежать результати
 
 Після завершення:
 
@@ -179,7 +218,7 @@ python3 -m csi_capture.experiment angle \
 - `manifest.json`
 - папки `trial_angle_*` з `capture.jsonl`
 
-## 8) Як перевірити, що дані записались
+## 9) Як перевірити, що дані записались
 
 Перевір кількість рядків у файлах `capture.jsonl` (має бути > 0):
 
@@ -195,7 +234,7 @@ python3 tools/analyze_wifi_angle_dataset.py \
   --out_dir out/angle_dataset
 ```
 
-## 9) Типові проблеми
+## 10) Типові проблеми
 
 - `records=0` у trial:
   - TX не передає або не той порт.
@@ -207,7 +246,7 @@ python3 tools/analyze_wifi_angle_dataset.py \
   - Linux: додай користувача в `dialout` і перезайди в сесію.
   - macOS: закрий інші serial-монітори, перепідключи плату, перевір `ls -l /dev/cu.usbmodem*`.
 
-## 10) Швидкий чекліст перед стартом
+## 11) Швидкий чекліст перед стартом
 
 - TX і RX плати підключені.
 - TX скрипт запущений на Laptop A.
