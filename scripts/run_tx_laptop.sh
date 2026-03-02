@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="/dev/ttyACM0"
+PORT=""
 BAUD="921600"
 TARGET="esp32s3"
 BUILD=1
@@ -21,7 +21,7 @@ Usage:
   scripts/run_tx_laptop.sh [options]
 
 Options:
-  --port <path>          Serial port (default: /dev/ttyACM0)
+  --port <path>          Serial port (default: auto-detect)
   --baud <num>           Flash/monitor baud (default: 921600)
   --target <chip>        IDF target (default: esp32s3)
   --idf-path <path>      ESP-IDF path (default: $HOME/esp/esp-idf)
@@ -31,6 +31,26 @@ Options:
   --monitor              Start idf.py monitor after flashing
   -h, --help             Show this help
 EOF
+}
+
+detect_serial_port() {
+  local candidates=()
+  shopt -s nullglob
+  candidates=(
+    /dev/ttyACM*
+    /dev/ttyUSB*
+    /dev/cu.usbmodem*
+    /dev/tty.usbmodem*
+    /dev/cu.usbserial*
+    /dev/tty.usbserial*
+  )
+  shopt -u nullglob
+
+  if [[ ${#candidates[@]} -gt 0 ]]; then
+    echo "${candidates[0]}"
+    return 0
+  fi
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -47,6 +67,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+if [[ -z "$PORT" ]]; then
+  if ! PORT="$(detect_serial_port)"; then
+    echo "No serial port detected. Use --port to specify one." >&2
+    exit 2
+  fi
+  echo "Auto-detected TX serial port: $PORT"
+fi
 
 if [[ ! -f "$IDF_PATH/export.sh" ]]; then
   echo "ESP-IDF export script not found: $IDF_PATH/export.sh" >&2
@@ -78,4 +106,3 @@ echo "If the board is powered, csi_send firmware should be transmitting now."
 if [[ "$MONITOR" -eq 1 ]]; then
   idf.py -p "$PORT" -b "$BAUD" monitor
 fi
-

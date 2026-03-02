@@ -63,6 +63,12 @@ cd ~/Projects/csi_capture
 ./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/esp32_csi
 ```
 
+Для macOS зазвичай порти мають вигляд `/dev/cu.usbmodem*` або `/dev/tty.usbmodem*`, наприклад:
+
+```bash
+./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/cu.usbmodem1101
+```
+
 3. Зібрати датасет (інтерактивно `baseline` → `hands_up`):
 
 ```bash
@@ -120,4 +126,3 @@ cd ~/Projects/csi_capture
 - Тримай фіксовану позу й орієнтацію людини (спиною до RX).
 - Мінімізуй сторонні рухи людей під час запису.
 - При зміні умов кімнати/розстановки створюй новий `dataset_id`.
-

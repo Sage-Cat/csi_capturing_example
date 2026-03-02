@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-DEVICE="/dev/esp32_csi"
+DEVICE=""
 DATASET_ROOT="data/experiments"
 DATASET_ID="$(date -u +%Y%m%d)"
 RUNS_PER_LABEL=5
@@ -24,7 +24,7 @@ Usage:
   scripts/run_static_sign_protocol.sh [options]
 
 Options:
-  --device <path>            Serial device (default: /dev/esp32_csi)
+  --device <path>            Serial device (default: auto-detect, prefers /dev/esp32_csi)
   --dataset-root <path>      Dataset root (default: data/experiments)
   --dataset-id <id>          Dataset id (default: UTC yyyymmdd)
   --runs <n>                 Runs per label (default: 5)
@@ -69,6 +69,11 @@ fi
 
 cd "$REPO_ROOT"
 
+device_args=()
+if [[ -n "$DEVICE" ]]; then
+  device_args=(--device "$DEVICE")
+fi
+
 capture_label() {
   local label="$1"
   local label_notes
@@ -86,9 +91,11 @@ capture_label() {
     --duration "$DURATION"
     --dataset-root "$DATASET_ROOT"
     --dataset-id "$DATASET_ID"
-    --device "$DEVICE"
     --notes "$label_notes"
   )
+  if [[ ${#device_args[@]} -gt 0 ]]; then
+    cmd+=("${device_args[@]}")
+  fi
 
   if [[ -n "$SUBJECT_ID" ]]; then
     cmd+=(--subject-id "$SUBJECT_ID")
@@ -108,11 +115,16 @@ echo "Checking devices..."
 
 if [[ "$SKIP_DRY_RUN" -eq 0 ]]; then
   echo "Running dry-run serial probe..."
-  ./tools/exp capture \
-    --experiment static_sign_v1 \
-    --dry-run-packets "$DRY_RUN_PACKETS" \
-    --dry-run-timeout "$DRY_RUN_TIMEOUT" \
-    --device "$DEVICE"
+  cmd=(
+    ./tools/exp capture
+    --experiment static_sign_v1
+    --dry-run-packets "$DRY_RUN_PACKETS"
+    --dry-run-timeout "$DRY_RUN_TIMEOUT"
+  )
+  if [[ ${#device_args[@]} -gt 0 ]]; then
+    cmd+=("${device_args[@]}")
+  fi
+  "${cmd[@]}"
 fi
 
 read -r -p "Set subject to BASELINE pose (back to receiver, neutral stance). Press Enter to start capture..."

@@ -50,7 +50,11 @@ def _default_artifact_path(experiment: str, model: str) -> Path:
 def _print_list_devices() -> None:
     candidates = list_serial_candidates()
     if not candidates:
-        print("No candidate serial devices found under /dev/esp32_csi, /dev/ttyACM*, /dev/ttyUSB*.")
+        print(
+            "No candidate serial devices found under "
+            "/dev/esp32_csi, /dev/ttyACM*, /dev/ttyUSB*, "
+            "/dev/tty.usbmodem*, /dev/cu.usbmodem*, /dev/tty.usbserial*, /dev/cu.usbserial*."
+        )
         return
 
     print("Serial device candidates:")
@@ -230,7 +234,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list-devices",
         action="store_true",
-        help="List serial candidates: /dev/esp32_csi, /dev/ttyACM*, /dev/ttyUSB*",
+        help=(
+            "List serial candidates: /dev/esp32_csi, /dev/ttyACM*, /dev/ttyUSB*, "
+            "/dev/tty.usbmodem*, /dev/cu.usbmodem*, /dev/tty.usbserial*, /dev/cu.usbserial*"
+        ),
     )
 
     sub = parser.add_subparsers(dest="command")

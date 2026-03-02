@@ -7,7 +7,7 @@ This workflow assumes:
 - Laptop A controls ESP32 TX board running `csi_send` (acts as AP/transmitter source).
 - Laptop B controls ESP32 RX board running `csi_recv` and captures CSI.
 - Human stands between AP and receiver, **back facing receiver**, and performs a static sign.
-- RX serial device is `/dev/esp32_csi` (symlink to `/dev/ttyACM0`).
+- RX serial device defaults to `/dev/esp32_csi` when available; on macOS it is typically `/dev/cu.usbmodem*` or `/dev/tty.usbmodem*`.
 
 ## 1) Physical Setup
 
@@ -25,14 +25,20 @@ First-time build+flash:
 
 ```bash
 cd ~/Projects/csi_capture
-./scripts/run_tx_laptop.sh --port /dev/ttyACM0
+./scripts/run_tx_laptop.sh
 ```
 
 Subsequent runs (skip rebuild/reflash):
 
 ```bash
 cd ~/Projects/csi_capture
-./scripts/run_tx_laptop.sh --port /dev/ttyACM0 --skip-build --skip-flash
+./scripts/run_tx_laptop.sh --skip-build --skip-flash
+```
+
+On macOS with explicit port:
+
+```bash
+./scripts/run_tx_laptop.sh --port /dev/cu.usbmodem2101
 ```
 
 Expected outcome:
@@ -62,10 +68,16 @@ cd ~/Projects/csi_capture
 ```bash
 cd ~/Projects/csi_capture
 ./tools/exp --list-devices
-./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/esp32_csi
+./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s
 ```
 
 If dry-run reports `0` packets, verify TX board is running and both boards are powered.
+
+On macOS, you can also pass an explicit device if multiple ports exist:
+
+```bash
+./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/cu.usbmodem1101
+```
 
 ### 3.3 Capture dataset (protocol runner)
 
@@ -74,13 +86,24 @@ Recommended interactive protocol (captures baseline then hands_up with prompts):
 ```bash
 cd ~/Projects/csi_capture
 ./scripts/run_static_sign_protocol.sh \
-  --device /dev/esp32_csi \
   --dataset-id 20260302_subject01_labA \
   --runs 5 \
   --duration 20s \
   --subject-id subject01 \
   --environment-id labA \
   --notes "back-to-rx posture, fixed feet marker"
+```
+
+On macOS with explicit port:
+
+```bash
+./scripts/run_static_sign_protocol.sh \
+  --device /dev/cu.usbmodem1101 \
+  --dataset-id 20260302_subject01_labA \
+  --runs 5 \
+  --duration 20s \
+  --subject-id subject01 \
+  --environment-id labA
 ```
 
 This creates:

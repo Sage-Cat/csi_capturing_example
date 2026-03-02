@@ -25,6 +25,8 @@ data/                     # Small reusable sample data only
 
 ## 1) System Dependencies (Both Laptops)
 
+Linux (Ubuntu/Debian):
+
 ```bash
 sudo apt update
 sudo apt install -y \
@@ -34,6 +36,15 @@ sudo usermod -a -G dialout $USER
 ```
 
 Log out and log in again after adding `dialout`.
+
+macOS (Homebrew):
+
+```bash
+brew install python cmake ninja ccache dfu-util libusb
+python3 -m pip install -r requirements.txt
+```
+
+On macOS, serial ports are usually like `/dev/cu.usbmodem*` or `/dev/tty.usbmodem*`.
 
 ## 2) ESP-IDF + esp-csi Setup
 
@@ -80,19 +91,26 @@ This copies tracked templates from `.vscode.template/` to your local ignored `.v
 TX node:
 
 ```bash
-./scripts/run_tx_laptop.sh --port /dev/ttyACM0
+./scripts/run_tx_laptop.sh
 ```
 
 RX node:
 
 ```bash
 ./scripts/run_rx_laptop.sh \
-  --port /dev/ttyACM1 \
+  --port /dev/esp32_csi \
   --exp-id exp_2026_02_23_lab \
   --scenario LoS \
   --run-id 1 \
   --distance-m 1.0 \
   --max-records 2500
+```
+
+On macOS, pass explicit ports when needed, for example:
+
+```bash
+./scripts/run_tx_laptop.sh --port /dev/cu.usbmodem2101
+./scripts/run_rx_laptop.sh --port /dev/cu.usbmodem1101 --exp-id exp_macos_test --scenario LoS --run-id 1 --distance-m 1.0 --max-records 200
 ```
 
 By default, RX output is stored under `experiments/<exp_id>/...`.
@@ -143,7 +161,7 @@ Device selection precedence for `tools/exp capture`:
 
 1. `--device`
 2. env var `CSI_CAPTURE_DEVICE` (or `ESP32_CSI_DEVICE`)
-3. default `/dev/esp32_csi`
+3. `/dev/esp32_csi` if present, otherwise auto-detected serial candidate
 
 For complete AP+RX two-laptop setup instructions, see:
 

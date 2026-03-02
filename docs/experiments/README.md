@@ -111,7 +111,7 @@ Device selection precedence:
 
 1. `--device`
 2. env var `CSI_CAPTURE_DEVICE` (or `ESP32_CSI_DEVICE`)
-3. default `/dev/esp32_csi`
+3. `/dev/esp32_csi` if present, otherwise auto-detected serial candidate (`/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/cu.usbmodem*`, `/dev/tty.usbmodem*`, `/dev/cu.usbserial*`, `/dev/tty.usbserial*`)
 
 Startup always prints selected device and resolved realpath.
 
