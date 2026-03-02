@@ -52,6 +52,7 @@ class CaptureConfig:
     packets_per_repeat: Optional[int]
     duration_s: Optional[float]
     inter_trial_pause_s: float
+    wait_for_enter_between_trials: bool
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,7 @@ def build_angle_cli_config(args: argparse.Namespace) -> dict[str, Any]:
             "packets_per_repeat": packets_per_repeat,
             "duration_s": duration_s,
             "inter_trial_pause_s": args.inter_trial_pause_s,
+            "wait_for_enter_between_trials": bool(args.wait_enter),
         },
         "angle": {
             "angles": angles,
@@ -422,6 +424,9 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
     inter_trial_pause_s = _require_non_negative_float(
         capture_cfg.get("inter_trial_pause_s", 0.0), "capture.inter_trial_pause_s"
     )
+    wait_for_enter_between_trials = capture_cfg.get("wait_for_enter_between_trials", False)
+    if not isinstance(wait_for_enter_between_trials, bool):
+        raise ExperimentConfigError("capture.wait_for_enter_between_trials must be boolean.")
 
     angle_array_config: Optional[dict[str, Any]] = None
     angle_geometry: Optional[dict[str, Any]] = None
@@ -454,6 +459,7 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
             packets_per_repeat=packets_per_repeat,
             duration_s=duration_s,
             inter_trial_pause_s=inter_trial_pause_s,
+            wait_for_enter_between_trials=wait_for_enter_between_trials,
         ),
         trials=trials,
         angle_array_config=angle_array_config,
@@ -528,6 +534,7 @@ def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
             "packets_per_repeat": config.capture.packets_per_repeat,
             "duration_s": config.capture.duration_s,
             "inter_trial_pause_s": config.capture.inter_trial_pause_s,
+            "wait_for_enter_between_trials": config.capture.wait_for_enter_between_trials,
         },
     }
     if len(config.run_ids) == 1:
@@ -608,6 +615,7 @@ def _manifest_template(
             "packets_per_repeat": config.capture.packets_per_repeat,
             "duration_s": config.capture.duration_s,
             "inter_trial_pause_s": config.capture.inter_trial_pause_s,
+            "wait_for_enter_between_trials": config.capture.wait_for_enter_between_trials,
         },
         "angle": {
             "array_config": config.angle_array_config,
@@ -752,13 +760,28 @@ def run_raw_config(
                     f"Completed run {run_id} trial {idx + 1}/{len(config.trials)}: "
                     f"{trial.trial_id} -> {written} records"
                 )
-                if idx < len(config.trials) - 1 and config.capture.inter_trial_pause_s > 0.0:
-                    pause_s = config.capture.inter_trial_pause_s
-                    print(
-                        f"Pause {pause_s:.1f}s before next trial. "
-                        "Move receiver to the next angle mark now."
-                    )
-                    time.sleep(pause_s)
+                if idx < len(config.trials) - 1:
+                    if (
+                        config.experiment_type == "angle"
+                        and config.capture.wait_for_enter_between_trials
+                    ):
+                        print(
+                            "Paused after trial capture. Move receiver to the next angle mark, "
+                            "then press Enter to continue."
+                        )
+                        try:
+                            input()
+                        except EOFError as exc:
+                            raise RuntimeError(
+                                "capture.wait_for_enter_between_trials=true requires interactive stdin."
+                            ) from exc
+                    elif config.capture.inter_trial_pause_s > 0.0:
+                        pause_s = config.capture.inter_trial_pause_s
+                        print(
+                            f"Pause {pause_s:.1f}s before next trial. "
+                            "Move receiver to the next angle mark now."
+                        )
+                        time.sleep(pause_s)
 
             manifest["status"] = "completed"
             manifest["ended_at_utc"] = _utc_now_iso()
@@ -911,6 +934,11 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="Pause between trials in seconds for CLI mode.",
+    )
+    angle_parser.add_argument(
+        "--wait-enter",
+        action="store_true",
+        help="Pause between angle trials and wait for Enter to continue.",
     )
     angle_parser.add_argument(
         "--scenario-tags",

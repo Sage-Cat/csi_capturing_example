@@ -34,6 +34,7 @@ class ExperimentConfigTests(unittest.TestCase):
             duration_s=None,
             output_format="jsonl",
             inter_trial_pause_s=5.0,
+            wait_enter=False,
             scenario_tags=["LoS"],
             room_id="room1",
             notes="notes",
@@ -74,6 +75,7 @@ class ExperimentConfigTests(unittest.TestCase):
         self.assertIn("angle_deg", config.trials[0].ground_truth)
         self.assertEqual(config.angle_array_config["num_antennas"], 1)
         self.assertEqual(config.capture.inter_trial_pause_s, 0.0)
+        self.assertFalse(config.capture.wait_for_enter_between_trials)
 
     def test_distance_config_builds_trials(self):
         payload = {
@@ -191,9 +193,18 @@ class ExperimentConfigTests(unittest.TestCase):
         raw = build_angle_cli_config(args)
         self.assertEqual(raw["experiment_type"], "angle")
         self.assertEqual(raw["run_ids"], ["001", "002"])
+        self.assertFalse(raw["capture"]["wait_for_enter_between_trials"])
         _raw, config = self._load(raw)
         self.assertEqual(config.run_ids, ["001", "002"])
         self.assertEqual(len(config.trials), 3)
+        self.assertFalse(config.capture.wait_for_enter_between_trials)
+
+    def test_build_angle_cli_config_sets_wait_for_enter(self):
+        args = self._angle_cli_args(wait_enter=True)
+        raw = build_angle_cli_config(args)
+        self.assertTrue(raw["capture"]["wait_for_enter_between_trials"])
+        _raw, config = self._load(raw)
+        self.assertTrue(config.capture.wait_for_enter_between_trials)
 
     def test_build_angle_cli_config_requires_angles(self):
         args = self._angle_cli_args(angles=None)
@@ -220,6 +231,24 @@ class ExperimentConfigTests(unittest.TestCase):
             "run_id": "1",
             "capture": {"packets_per_repeat": 5},
             "distance": {"distances_m": [1.0], "repeats_per_distance": 1},
+        }
+        with self.assertRaises(ExperimentConfigError):
+            self._load(payload)
+
+    def test_capture_wait_for_enter_must_be_boolean(self):
+        payload = {
+            "experiment_type": "angle",
+            "exp_id": "exp_angle_test",
+            "capture": {"packets_per_repeat": 5, "wait_for_enter_between_trials": "yes"},
+            "angle": {
+                "angles": [0],
+                "repeats_per_angle": 1,
+                "array_config": {"num_antennas": 1, "antenna_spacing_m": None},
+                "geometry": {
+                    "orientation_reference": "0 deg points to AP",
+                    "measurement_positions": "AP center, receiver on circle",
+                },
+            },
         }
         with self.assertRaises(ExperimentConfigError):
             self._load(payload)

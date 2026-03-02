@@ -183,6 +183,25 @@ python3 -m csi_capture.experiment angle \
 
 - Після перестановки відійди від пристрою, не стоячи між TX і RX.
 
+Альтернатива (керування вручну): замість таймера використовуй `--wait-enter`.
+Тоді після кожного кута скрипт чекатиме Enter і продовжить тільки коли натиснеш клавішу.
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --exp-id exp_angle_manual_step_20260302 \
+  --target-profile esp32s3_csi_v1 \
+  --runs 1 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --repeats-per-angle 1 \
+  --packets-per-repeat 300 \
+  --wait-enter \
+  --scenario-tags LoS \
+  --room-id room_empty \
+  --notes "перехід на наступний кут тільки після Enter" \
+  --num-antennas 1 \
+  --device /dev/esp32_csi
+```
+
 ## 7) Швидкі приклади параметрів (без JSON)
 
 Вказати конкретні `run_id` вручну:
@@ -224,6 +243,7 @@ python3 -m csi_capture.experiment angle \
   --repeats-per-angle <N_повторів_на_кут> \
   --packets-per-repeat <N_пакетів> \
   --inter-trial-pause-s <пауза_сек> \
+  --wait-enter \
   --scenario-tags <LoS|NLoS|multipath|interference> \
   --room-id <id_кімнати> \
   --notes "<короткі_примітки>" \
@@ -242,6 +262,7 @@ python3 -m csi_capture.experiment angle \
 - `--packets-per-repeat`: скільки пакетів зібрати в одному trial.
 - `--duration-s`: альтернатива пакетам (час у секундах). Використовуй або `--packets-per-repeat`, або `--duration-s`.
 - `--inter-trial-pause-s`: пауза між trial, щоб встигнути перейти на наступну кутову мітку.
+- `--wait-enter`: замість паузи чекати Enter між trial (зручно для ручного переходу по кутам).
 - `--scenario-tags`: мітки умов експерименту (`LoS`, `NLoS`, `multipath`, `interference`).
 - `--room-id`, `--notes`: опис середовища.
 - `--num-antennas`, `--antenna-spacing-m`: метадані про антенну конфігурацію.

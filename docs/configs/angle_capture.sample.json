@@ -22,7 +22,8 @@
   "capture": {
     "output_format": "jsonl",
     "packets_per_repeat": 120,
-    "inter_trial_pause_s": 0
+    "inter_trial_pause_s": 0,
+    "wait_for_enter_between_trials": false
   },
   "angle": {
     "angles": [

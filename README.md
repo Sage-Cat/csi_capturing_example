@@ -148,6 +148,21 @@ python3 -m csi_capture.experiment angle \
   --num-antennas 1 \
   --device /dev/esp32_csi
 
+# Same flow but operator-controlled: wait for Enter between angles
+python3 -m csi_capture.experiment angle \
+  --exp-id exp_angle_radial_demo_manual_step \
+  --target-profile esp32s3_csi_v1 \
+  --runs 1 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --repeats-per-angle 1 \
+  --packets-per-repeat 300 \
+  --wait-enter \
+  --scenario-tags LoS \
+  --room-id room_a \
+  --notes "press Enter after moving RX to next angle mark" \
+  --num-antennas 1 \
+  --device /dev/esp32_csi
+
 # Same idea, but with explicit run ids
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_radial_demo \
