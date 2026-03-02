@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+import platform
 import time
 from pathlib import Path
 from typing import IO, Iterable, Iterator, Optional, TextIO
@@ -81,9 +82,17 @@ def ensure_serial_port_access(port: str) -> None:
     if not os.path.exists(port):
         raise SerialPortAccessError(f"serial port does not exist: {port}")
     if not os.access(port, os.R_OK | os.W_OK):
+        if platform.system() == "Darwin":
+            raise SerialPortAccessError(
+                f"no read/write access to serial port: {port}\n"
+                "macOS fix:\n"
+                "  1) close any serial monitor app using the port\n"
+                "  2) unplug/re-plug the board and retry\n"
+                "  3) verify with: ls -l /dev/cu.usbmodem* /dev/tty.usbmodem*"
+            )
         raise SerialPortAccessError(
             f"no read/write access to serial port: {port}\n"
-            "Fix:\n"
+            "Linux fix:\n"
             "  1) sudo usermod -a -G dialout $USER\n"
             "  2) logout/login (or restart terminal session manager)\n"
             "  3) verify: id -nG  (must include dialout)"
@@ -106,7 +115,7 @@ def serial_lines(
         raise RuntimeError(
             "Missing dependency 'pyserial' for this Python interpreter. "
             "Install with: python3 -m pip install pyserial "
-            "or (for sudo/system python) sudo apt install python3-serial"
+            "or install OS package (Linux apt: python3-serial, macOS brew: pyserial)"
         ) from exc
 
     while True:

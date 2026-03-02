@@ -46,7 +46,21 @@ sudo usermod -a -G dialout $USER
 
 Після цього вийди з сесії і зайди знову (або перезавантаж ноутбук).
 
-### 4.2 Встановлення ESP-IDF
+### 4.2 Системні пакети (macOS + Homebrew)
+
+```bash
+brew update
+brew install python cmake ninja ccache dfu-util libusb
+```
+
+Для macOS порти зазвичай мають вигляд:
+
+- `/dev/cu.usbmodem*`
+- `/dev/tty.usbmodem*`
+- `/dev/cu.usbserial*`
+- `/dev/tty.usbserial*`
+
+### 4.3 Встановлення ESP-IDF
 
 ```bash
 mkdir -p ~/esp
@@ -62,26 +76,32 @@ cd esp-idf
 ls -l ~/esp/esp-idf/export.sh
 ```
 
-### 4.3 Встановлення esp-csi
+### 4.4 Встановлення esp-csi
 
 ```bash
 cd ~/esp
 git clone https://github.com/espressif/esp-csi.git
 ```
 
-### 4.4 Python-залежності проєкту
+### 4.5 Python-залежності проєкту
 
 ```bash
 cd /home/sagecat/Projects/csi_capture
 python3 -m pip install -r requirements.txt
 ```
 
-### 4.5 Перевірка RX-девайсу
+### 4.6 Перевірка RX-девайсу
 
-На RX-ноуті:
+На Linux RX-ноуті:
 
 ```bash
 ls -l /dev/esp32_csi
+```
+
+На macOS RX-ноуті:
+
+```bash
+ls -1 /dev/cu.usbmodem* /dev/tty.usbmodem* 2>/dev/null
 ```
 
 Якщо скрипт пише `export.sh not found`, значить ESP-IDF встановлено не в `~/esp/esp-idf`.
@@ -100,7 +120,13 @@ ls -l /dev/esp32_csi
 
 ```bash
 cd /home/sagecat/Projects/csi_capture
-./scripts/run_tx_laptop.sh --port /dev/ttyACM0 --skip-build --skip-flash
+./scripts/run_tx_laptop.sh --skip-build --skip-flash
+```
+
+Скрипт сам пробує авто-визначити порт. Якщо потрібно явно (особливо на macOS), передай `--port`:
+
+```bash
+./scripts/run_tx_laptop.sh --port /dev/cu.usbmodem2101 --skip-build --skip-flash
 ```
 
 ### Крок B: запусти збір кутового датасету (Laptop B)
@@ -108,7 +134,18 @@ cd /home/sagecat/Projects/csi_capture
 ```bash
 cd /home/sagecat/Projects/csi_capture
 python3 -m csi_capture.experiment angle \
-  --config docs/configs/angle_radial_45deg_2runs.sample.json
+  --config docs/configs/angle_radial_45deg_2runs.sample.json \
+  --device auto
+```
+
+`--device auto` робить авто-вибір порту на Linux/macOS (пріоритет: `/dev/esp32_csi`, далі системні serial-кандидати).
+
+Якщо на macOS підключено кілька USB-пристроїв, краще явно вказати порт:
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --config docs/configs/angle_radial_45deg_2runs.sample.json \
+  --device /dev/cu.usbmodem1101
 ```
 
 ## 6) Протокол проведення під час запису
@@ -162,18 +199,19 @@ python3 tools/analyze_wifi_angle_dataset.py \
 
 - `records=0` у trial:
   - TX не передає або не той порт.
-  - RX не на `/dev/esp32_csi`.
+  - RX порт вибрано неправильно (на macOS часто треба явний `/dev/cu.usbmodem*`).
   - Неправильна прошивка на одній із плат.
   - Занадто великий шум/перешкоди або слабкий сигнал.
 
 - Немає доступу до порту:
-  - Додай користувача в групу `dialout` і перезайди в сесію.
+  - Linux: додай користувача в `dialout` і перезайди в сесію.
+  - macOS: закрий інші serial-монітори, перепідключи плату, перевір `ls -l /dev/cu.usbmodem*`.
 
 ## 10) Швидкий чекліст перед стартом
 
 - TX і RX плати підключені.
 - TX скрипт запущений на Laptop A.
-- На Laptop B видно `/dev/esp32_csi`.
+- На Laptop B видно serial-порт (`/dev/esp32_csi` або `/dev/cu.usbmodem*`).
 - Кути на підлозі розмічені.
 - Вибраний фіксований радіус.
 - У кімнаті немає зайвого руху під час запису.

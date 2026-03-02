@@ -131,8 +131,17 @@ python3 -m csi_capture.experiment angle \
   --config docs/configs/angle_radial_45deg_2runs.sample.json
 ```
 
-Config defaults use `/dev/esp32_csi` as the RX serial path.
+Config defaults use auto serial selection (`device.path: "auto"`), preferring `/dev/esp32_csi`
+when available and falling back to detected serial candidates (`/dev/ttyACM*`, `/dev/cu.usbmodem*`, etc.).
 `run_ids` can be set in config to execute multiple full sweeps in one command.
+For cross-platform use (including macOS), angle configs now use `device.path: "auto"` and
+you can always override from CLI:
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --config docs/configs/angle_radial_45deg_2runs.sample.json \
+  --device auto
+```
 
 New experiment framework CLI (includes `static_sign_v1`):
 

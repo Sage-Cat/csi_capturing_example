@@ -10,10 +10,15 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 
 from csi_capture.capture import (
-    SerialPortAccessError,
     capture_stream,
-    ensure_serial_port_access,
     serial_lines,
+)
+from csi_capture.core.device import (
+    DeviceAccessError,
+    ResolvedDevice,
+    format_device_banner,
+    resolve_serial_device,
+    validate_serial_device_access,
 )
 
 
@@ -373,6 +378,13 @@ def _duration_limited_lines(lines: Iterable[str], duration_s: float) -> Iterator
         yield line
 
 
+def _resolve_runtime_device(config_device_path: str, device_override: Optional[str]) -> ResolvedDevice:
+    requested = device_override if device_override is not None else config_device_path
+    if requested.strip().lower() == "auto":
+        return resolve_serial_device(cli_device=None)
+    return resolve_serial_device(cli_device=requested)
+
+
 def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     output: dict[str, Any] = {
         "experiment_type": config.experiment_type,
@@ -418,7 +430,9 @@ def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     return output
 
 
-def _trial_metadata(config: ExperimentConfig, trial: TrialSpec, run_id: str) -> dict[str, Any]:
+def _trial_metadata(
+    config: ExperimentConfig, trial: TrialSpec, run_id: str, device_path: str
+) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "exp_id": config.exp_id,
         "experiment_type": config.experiment_type,
@@ -426,7 +440,7 @@ def _trial_metadata(config: ExperimentConfig, trial: TrialSpec, run_id: str) -> 
         "trial_id": trial.trial_id,
         "repeat_index": trial.repeat_index,
         "scenario_tags": config.scenario_tags,
-        "device_path": config.device.path,
+        "device_path": device_path,
         "room_id": config.environment.get("room_id", ""),
         "environment_notes": config.environment.get("notes", ""),
     }
@@ -441,6 +455,7 @@ def _trial_metadata(config: ExperimentConfig, trial: TrialSpec, run_id: str) -> 
 def _manifest_template(
     config: ExperimentConfig,
     run_id: str,
+    runtime_device: ResolvedDevice,
     config_snapshot: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -452,7 +467,9 @@ def _manifest_template(
         "created_at_utc": _utc_now_iso(),
         "status": "running",
         "device": {
-            "path": config.device.path,
+            "path": runtime_device.path,
+            "realpath": runtime_device.realpath,
+            "selection_source": runtime_device.source,
             "baud": config.device.baud,
             "timeout_s": config.device.timeout_s,
             "reconnect_on_error": config.device.reconnect_on_error,
@@ -488,19 +505,23 @@ def _write_manifest(manifest_path: Path, manifest: dict[str, Any]) -> None:
         handle.write("\n")
 
 
-def run_config(config_path: Path, expected_type: Optional[str] = None) -> int:
+def run_config(
+    config_path: Path, expected_type: Optional[str] = None, device_override: Optional[str] = None
+) -> int:
     raw_config, config = load_experiment_config(config_path)
     if expected_type is not None and config.experiment_type != expected_type:
         raise ExperimentConfigError(
             f"Config experiment_type is '{config.experiment_type}', expected '{expected_type}'."
         )
 
-    ensure_serial_port_access(config.device.path)
+    runtime_device = _resolve_runtime_device(config.device.path, device_override=device_override)
+    validate_serial_device_access(runtime_device.path)
+    print(format_device_banner(runtime_device))
 
     repo_root = Path(__file__).resolve().parent.parent
 
     stream = serial_lines(
-        port=config.device.path,
+        port=runtime_device.path,
         baud=config.device.baud,
         timeout=config.device.timeout_s,
         reconnect_on_error=config.device.reconnect_on_error,
@@ -521,6 +542,7 @@ def run_config(config_path: Path, expected_type: Optional[str] = None) -> int:
             manifest = _manifest_template(
                 config=config,
                 run_id=run_id,
+                runtime_device=runtime_device,
                 config_snapshot=raw_config,
                 repo_root=repo_root,
             )
@@ -549,7 +571,7 @@ def run_config(config_path: Path, expected_type: Optional[str] = None) -> int:
             print(
                 f"Starting {config.experiment_type} experiment: exp_id={config.exp_id}, "
                 f"run_id={run_id} ({run_index}/{run_count}), trials={len(config.trials)}, "
-                f"device={config.device.path}"
+                f"device={runtime_device.path}"
             )
 
             run_total_records = 0
@@ -563,7 +585,9 @@ def run_config(config_path: Path, expected_type: Optional[str] = None) -> int:
                 trial_entry["started_at_utc"] = _utc_now_iso()
                 _write_manifest(manifest_path, manifest)
 
-                metadata = _trial_metadata(config=config, trial=trial, run_id=run_id)
+                metadata = _trial_metadata(
+                    config=config, trial=trial, run_id=run_id, device_path=runtime_device.path
+                )
                 with out_file.open("w", encoding="utf-8", newline="") as out_handle:
                     if config.capture.packets_per_repeat is not None:
                         written = capture_stream(
@@ -640,12 +664,27 @@ def _parser() -> argparse.ArgumentParser:
 
     run_parser = sub.add_parser("run", help="Run an experiment from a JSON config.")
     run_parser.add_argument("--config", required=True, help="Path to experiment config JSON.")
+    run_parser.add_argument(
+        "--device",
+        default=None,
+        help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
+    )
 
     distance_parser = sub.add_parser("distance", help="Run distance experiment config.")
     distance_parser.add_argument("--config", required=True, help="Path to experiment config JSON.")
+    distance_parser.add_argument(
+        "--device",
+        default=None,
+        help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
+    )
 
     angle_parser = sub.add_parser("angle", help="Run angle experiment config.")
     angle_parser.add_argument("--config", required=True, help="Path to experiment config JSON.")
+    angle_parser.add_argument(
+        "--device",
+        default=None,
+        help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
+    )
 
     return parser
 
@@ -664,17 +703,17 @@ def main() -> int:
 
     try:
         if args.command == "run":
-            return run_config(config_path)
+            return run_config(config_path, device_override=args.device)
         if args.command == "distance":
-            return run_config(config_path, expected_type="distance")
+            return run_config(config_path, expected_type="distance", device_override=args.device)
         if args.command == "angle":
-            return run_config(config_path, expected_type="angle")
+            return run_config(config_path, expected_type="angle", device_override=args.device)
         print(f"Error: unknown command {args.command}")
         return 2
     except ExperimentConfigError as err:
         print(f"Error: invalid config: {err}")
         return 2
-    except SerialPortAccessError as err:
+    except DeviceAccessError as err:
         print(f"Error: {err}")
         return 2
     except RuntimeError as err:

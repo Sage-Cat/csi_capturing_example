@@ -12,7 +12,7 @@
     "notes": "AoA capture sweep sample config"
   },
   "device": {
-    "path": "/dev/esp32_csi",
+    "path": "auto",
     "baud": 921600,
     "timeout_s": 1.0,
     "reconnect_on_error": false,
