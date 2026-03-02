@@ -4,7 +4,7 @@ This repository is organized for a repeated capture-analysis cycle with multiple
 
 ## Tracked in Git
 
-- `csi_capture/`: reusable capture/parser Python code.
+- `csi_capture/`: reusable capture/parser/experiment Python code.
 - `scripts/`: operational shell scripts (`run_tx_laptop.sh`, `run_rx_laptop.sh`).
 - `tools/`: analysis scripts for RSSI/CSI.
 - `tests/`: unit tests.
@@ -26,5 +26,11 @@ This repository is organized for a repeated capture-analysis cycle with multiple
 2. Raw logs are stored under `experiments/<exp_id>/...`.
 3. Run analysis scripts from `tools/` with `--data_dir experiments/<exp_id>`.
 4. Reports/figures/tables are generated under `out/`.
+
+Alternative config-driven flow:
+
+1. Prepare JSON config under `docs/configs/`.
+2. Run `python3 -m csi_capture.experiment <distance|angle> --config <path>`.
+3. Output is written to `experiments/<exp_id>/<experiment_type>/run_<run_id>/...` with `manifest.json`.
 
 This keeps source code clean while allowing unlimited local experiments.

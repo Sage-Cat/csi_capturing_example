@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-PORT="/dev/ttyACM0"
+PORT="/dev/esp32_csi"
 BAUD="921600"
 TARGET="esp32s3"
 FORMAT="jsonl"
@@ -46,7 +46,7 @@ Key experiment options:
   --max-records <n>        Number of CSI records to capture (default: 2500)
 
 Device/build options:
-  --port <path>            Serial port (default: /dev/ttyACM0)
+  --port <path>            Serial port (default: /dev/esp32_csi)
   --baud <num>             Serial baud (default: 921600)
   --target <chip>          IDF target (default: esp32s3)
   --idf-path <path>        ESP-IDF path (default: $HOME/esp/esp-idf)
@@ -120,6 +120,7 @@ if [[ -z "$OUT_FILE" ]]; then
 fi
 
 META_FILE="$EXP_ROOT/$EXP_ID/meta.json"
+MANIFEST_FILE="$BASE_DIR/manifest.json"
 mkdir -p "$(dirname "$META_FILE")"
 if [[ ! -f "$META_FILE" ]]; then
   cat > "$META_FILE" <<EOF
@@ -157,8 +158,11 @@ python3 -m csi_capture.capture \
   --format "$FORMAT" \
   --max-records "$MAX_RECORDS" \
   --exp-id "$EXP_ID" \
+  --experiment-type distance \
   --scenario "$SCENARIO" \
   --run-id "$RUN_ID" \
+  --trial-id "distance_${DISTANCE_TAG}m" \
+  --device-path "$PORT" \
   --distance-m "$DISTANCE_M"
 
 if [[ "$FORMAT" == "jsonl" ]]; then
@@ -172,6 +176,46 @@ if [[ "$RECORDS_CAPTURED" -le 0 ]]; then
   exit 1
 fi
 
+GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
+  GIT_DIRTY=1
+else
+  GIT_DIRTY=0
+fi
+
+python3 - <<PY
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+manifest = {
+    "exp_id": "$EXP_ID",
+    "experiment_type": "distance",
+    "run_id": "$RUN_ID",
+    "trial_id": "distance_${DISTANCE_TAG}m",
+    "created_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "device_path": "$PORT",
+    "git_commit": "$GIT_COMMIT",
+    "git_dirty": bool(int("$GIT_DIRTY")),
+    "output_file": "$OUT_FILE",
+    "records_captured": int("$RECORDS_CAPTURED"),
+    "config_snapshot": {
+        "format": "$FORMAT",
+        "max_records": int("$MAX_RECORDS"),
+        "scenario": "$SCENARIO",
+        "distance_m": float("$DISTANCE_M"),
+        "channel": int("$CHANNEL"),
+        "bandwidth_mhz": int("$BANDWIDTH_MHZ"),
+        "packet_rate_hz": int("$PACKET_RATE_HZ"),
+        "tx_power_dbm": "$TX_POWER_DBM",
+        "target": "$TARGET",
+    },
+}
+
+Path("$MANIFEST_FILE").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+PY
+
 echo "RX capture complete: $RECORDS_CAPTURED records"
 echo "Output: $OUT_FILE"
 echo "Meta:   $META_FILE"
+echo "Manifest: $MANIFEST_FILE"

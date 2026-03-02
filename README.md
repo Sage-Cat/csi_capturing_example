@@ -10,11 +10,11 @@ Primary workflow:
 ## Repository Layout
 
 ```text
-csi_capture/              # Python capture/parser modules
+csi_capture/              # Python capture/parser/experiment modules
 scripts/                  # Operational scripts (TX/RX, local setup)
 tools/                    # Analysis scripts
 tests/                    # Unit tests
-docs/                     # Analysis notes and methodology docs
+docs/                     # Notes + config templates + architecture docs
 experiments/              # Local raw runs (git-ignored except README/.gitkeep)
 out/                      # Local generated figures/tables/reports (git-ignored except README/.gitkeep)
 data/                     # Small reusable sample data only
@@ -97,6 +97,40 @@ RX node:
 
 By default, RX output is stored under `experiments/<exp_id>/...`.
 
+New unified config-driven runner (distance + angle):
+
+```bash
+# Distance experiment from config
+python3 -m csi_capture.experiment distance \
+  --config docs/configs/distance_capture.sample.json
+
+# Angle/AoA dataset capture from config
+python3 -m csi_capture.experiment angle \
+  --config docs/configs/angle_capture.sample.json
+```
+
+Config defaults use `/dev/esp32_csi` as the RX serial path.
+
+New experiment framework CLI (includes `static_sign_v1`):
+
+```bash
+# List serial candidates (includes /dev/esp32_csi symlink resolution)
+./tools/exp --list-devices
+
+# Dry-run: open serial and parse N CSI packets, then exit
+./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s
+
+# Capture static sign dataset
+./tools/exp capture --experiment static_sign_v1 --label hands_up --runs 5 --duration 20s
+./tools/exp capture --experiment static_sign_v1 --label baseline --runs 5 --duration 20s
+```
+
+Device selection precedence for `tools/exp capture`:
+
+1. `--device`
+2. env var `CSI_CAPTURE_DEVICE` (or `ESP32_CSI_DEVICE`)
+3. default `/dev/esp32_csi`
+
 ## 5) Experiment Data Structure
 
 Each captured row stores:
@@ -106,18 +140,24 @@ Each captured row stores:
 - `csi` (I/Q integer array)
 - `esp_timestamp`
 - `mac`
-- plus metadata tags (`exp_id`, `scenario`, `run_id`, `distance_m`)
+- plus metadata tags such as `exp_id`, `experiment_type`, `run_id`, `trial_id`, `device_path`, scenario fields, and ground-truth (`distance_m` or `angle_deg`)
 
 Example:
 
 ```json
-{"timestamp":1700000000000,"rssi":-15,"csi":[1,-2,3,-4],"esp_timestamp":119050,"mac":"1a:00:00:00:00:00","exp_id":"exp_2026_02_23_lab","scenario":"LoS","run_id":1,"distance_m":1.0}
+{"timestamp":1700000000000,"rssi":-15,"csi":[1,-2,3,-4],"esp_timestamp":119050,"mac":"1a:00:00:00:00:00","exp_id":"exp_2026_02_23_lab","experiment_type":"angle","run_id":"1","trial_id":"angle_30deg_rep_001","device_path":"/dev/esp32_csi","scenario_tags":["LoS"],"angle_deg":30.0}
 ```
 
 Layout:
 
-- `experiments/<exp_id>/meta.json`
-- `experiments/<exp_id>/<scenario>/run_<run_id>/distance_<X>m.jsonl`
+- Legacy distance script layout (unchanged):
+  - `experiments/<exp_id>/meta.json`
+  - `experiments/<exp_id>/<scenario>/run_<run_id>/distance_<X>m.jsonl`
+- Unified runner layout:
+  - `experiments/<exp_id>/<experiment_type>/run_<run_id>/manifest.json`
+  - `experiments/<exp_id>/<experiment_type>/run_<run_id>/trial_<trial_id>/capture.jsonl`
+
+Every unified runner invocation writes a per-run `manifest.json` with config snapshot, git revision, device path, and trial summaries.
 
 ## 6) Analysis Commands
 
@@ -137,7 +177,32 @@ python3 tools/analyze_wifi_stability_statistics.py \
   --out_dir out/stability_statistics
 ```
 
+Angle dataset summary:
+
+```bash
+python3 tools/analyze_wifi_angle_dataset.py \
+  --data_dir experiments/<exp_id>/angle \
+  --out_dir out/angle_dataset
+```
+
 Outputs are written to `out/` and are git-ignored.
+
+Static sign train/eval:
+
+```bash
+./tools/exp train \
+  --experiment static_sign_v1 \
+  --dataset data/experiments/static_sign_v1/<dataset_id> \
+  --model svm_linear \
+  --window 1s \
+  --overlap 0.5
+
+./tools/exp eval \
+  --experiment static_sign_v1 \
+  --dataset data/experiments/static_sign_v1/<dataset_id> \
+  --model artifacts/static_sign_v1/<stamp>/svm_linear.pkl \
+  --report out/static_sign_v1/report.json
+```
 
 ## 7) Make Targets
 
@@ -146,7 +211,10 @@ make setup-vscode
 make test
 make tx-node PORT=/dev/ttyACM0
 make rx-smoke PORT=/dev/ttyACM1 EXP_ID=exp_smoke
+make experiment-distance CONFIG=docs/configs/distance_capture.sample.json
+make experiment-angle CONFIG=docs/configs/angle_capture.sample.json
 make analyze-distance DATA_DIR=experiments/<exp_id>
 make analyze-stability DATA_DIR=experiments/<exp_id>
+make analyze-angle DATA_DIR=experiments/<exp_id>/angle
 make analyze-all DATA_DIR=experiments/<exp_id>
 ```

@@ -6,9 +6,13 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import IO, Iterable, Optional, TextIO
+from typing import IO, Iterable, Iterator, Optional, TextIO
 
 from csi_capture.parser import CSIRecord, parse_csi_line
+
+
+class SerialPortAccessError(RuntimeError):
+    """Raised when a serial port path is missing or inaccessible."""
 
 
 def _record_to_dict(record: CSIRecord, metadata: Optional[dict] = None) -> dict:
@@ -72,7 +76,29 @@ def capture_stream(
     return written
 
 
-def _serial_lines(port: str, baud: int):
+def ensure_serial_port_access(port: str) -> None:
+    """Validate that a serial device path exists and is readable/writable."""
+    if not os.path.exists(port):
+        raise SerialPortAccessError(f"serial port does not exist: {port}")
+    if not os.access(port, os.R_OK | os.W_OK):
+        raise SerialPortAccessError(
+            f"no read/write access to serial port: {port}\n"
+            "Fix:\n"
+            "  1) sudo usermod -a -G dialout $USER\n"
+            "  2) logout/login (or restart terminal session manager)\n"
+            "  3) verify: id -nG  (must include dialout)"
+        )
+
+
+def serial_lines(
+    port: str,
+    baud: int,
+    timeout: float = 1.0,
+    reconnect_on_error: bool = False,
+    reconnect_delay_s: float = 1.0,
+    yield_on_timeout: bool = False,
+) -> Iterator[str]:
+    """Yield decoded serial lines with timeout and optional reconnect handling."""
     # Import here so parser tests run without serial dependency.
     try:
         import serial
@@ -83,12 +109,20 @@ def _serial_lines(port: str, baud: int):
             "or (for sudo/system python) sudo apt install python3-serial"
         ) from exc
 
-    with serial.Serial(port=port, baudrate=baud, timeout=1) as ser:
-        while True:
-            raw = ser.readline()
-            if not raw:
-                continue
-            yield raw.decode("utf-8", errors="replace")
+    while True:
+        try:
+            with serial.Serial(port=port, baudrate=baud, timeout=timeout) as ser:
+                while True:
+                    raw = ser.readline()
+                    if not raw:
+                        if yield_on_timeout:
+                            yield ""
+                        continue
+                    yield raw.decode("utf-8", errors="replace")
+        except serial.SerialException as exc:
+            if not reconnect_on_error:
+                raise RuntimeError(f"Serial connection error on {port}: {exc}") from exc
+            time.sleep(reconnect_delay_s)
 
 
 def main() -> int:
@@ -116,23 +150,27 @@ def main() -> int:
         help="Stop after N parsed CSI records",
     )
     parser.add_argument("--exp-id", default=None, help="Experiment identifier")
+    parser.add_argument(
+        "--experiment-type", default=None, help="Experiment type (e.g. distance, angle)"
+    )
     parser.add_argument("--scenario", default=None, help="Scenario label (LoS/NLoS_*)")
     parser.add_argument("--run-id", type=int, default=None, help="Run index, e.g. 1..3")
+    parser.add_argument("--trial-id", default=None, help="Trial identifier")
     parser.add_argument("--distance-m", type=float, default=None, help="Ground-truth distance in meters")
+    parser.add_argument(
+        "--device-path",
+        default=None,
+        help="Device identifier to store in output metadata (defaults to --port if omitted)",
+    )
     args = parser.parse_args()
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not os.path.exists(args.port):
-        print(f"Error: serial port does not exist: {args.port}")
-        return 2
-    if not os.access(args.port, os.R_OK | os.W_OK):
-        print(f"Error: no read/write access to serial port: {args.port}")
-        print("Fix:")
-        print("  1) sudo usermod -a -G dialout $USER")
-        print("  2) logout/login (or restart terminal session manager)")
-        print("  3) verify: id -nG  (must include dialout)")
+    try:
+        ensure_serial_port_access(args.port)
+    except SerialPortAccessError as err:
+        print(f"Error: {err}")
         return 2
 
     print(
@@ -142,9 +180,12 @@ def main() -> int:
 
     metadata = {
         "exp_id": args.exp_id,
+        "experiment_type": args.experiment_type,
         "scenario": args.scenario,
         "run_id": args.run_id,
+        "trial_id": args.trial_id,
         "distance_m": args.distance_m,
+        "device_path": args.device_path,
     }
     metadata = {k: v for k, v in metadata.items() if v is not None}
 
@@ -152,7 +193,7 @@ def main() -> int:
     try:
         with output_path.open("w", encoding="utf-8", newline="") as out:
             written = capture_stream(
-                _serial_lines(args.port, args.baud),
+                serial_lines(args.port, args.baud),
                 out=out,
                 output_format=args.format,
                 max_records=args.max_records,
