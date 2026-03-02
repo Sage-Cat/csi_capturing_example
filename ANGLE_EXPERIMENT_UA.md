@@ -206,7 +206,58 @@ python3 -m csi_capture.experiment angle \
   --device /dev/esp32_csi
 ```
 
-## 8) Де лежать результати
+## 8) Шпаргалка по параметрах CLI (що міняти перед кожним запуском)
+
+Базовий шаблон:
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --exp-id <назва_експерименту> \
+  --runs <N_прогонів> \
+  --angles <кут1> <кут2> <кут3> ... \
+  --repeats-per-angle <N_повторів_на_кут> \
+  --packets-per-repeat <N_пакетів> \
+  --inter-trial-pause-s <пауза_сек> \
+  --scenario-tags <LoS|NLoS|multipath|interference> \
+  --room-id <id_кімнати> \
+  --notes "<короткі_примітки>" \
+  --num-antennas <1|2|...> \
+  --device <порт_або_auto>
+```
+
+Що означають ключові параметри:
+
+- `--exp-id`: ідентифікатор серії експерименту. Краще новий для кожної сесії (наприклад `angle_lab_20260302`).
+- `--runs`: скільки повних обходів усіх кутів зробити (наприклад `2`).
+- `--run-id` / `--run-ids`: якщо хочеш задати імена прогонів вручну. Не змішуй з `--runs`.
+- `--angles`: список ground-truth кутів у градусах (наприклад `0 45 90 135 180 225 270 315`).
+- `--repeats-per-angle`: скільки разів повторити кожен кут в межах одного run.
+- `--packets-per-repeat`: скільки пакетів зібрати в одному trial.
+- `--duration-s`: альтернатива пакетам (час у секундах). Використовуй або `--packets-per-repeat`, або `--duration-s`.
+- `--inter-trial-pause-s`: пауза між trial, щоб встигнути перейти на наступну кутову мітку.
+- `--scenario-tags`: мітки умов експерименту (`LoS`, `NLoS`, `multipath`, `interference`).
+- `--room-id`, `--notes`: опис середовища.
+- `--num-antennas`, `--antenna-spacing-m`: метадані про антенну конфігурацію.
+- `--device`: порт RX ESP32. Для авто-пошуку: `--device auto`.
+
+Найчастіший практичний варіант (8 кутів, 2 прогони):
+
+```bash
+python3 -m csi_capture.experiment angle \
+  --exp-id angle_roomA_20260302 \
+  --runs 2 \
+  --angles 0 45 90 135 180 225 270 315 \
+  --repeats-per-angle 1 \
+  --packets-per-repeat 300 \
+  --inter-trial-pause-s 12 \
+  --scenario-tags LoS \
+  --room-id roomA \
+  --notes "AP в центрі, RX по колу R=2м" \
+  --num-antennas 1 \
+  --device /dev/esp32_csi
+```
+
+## 9) Де лежать результати
 
 Після завершення:
 
@@ -218,7 +269,7 @@ python3 -m csi_capture.experiment angle \
 - `manifest.json`
 - папки `trial_angle_*` з `capture.jsonl`
 
-## 9) Як перевірити, що дані записались
+## 10) Як перевірити, що дані записались
 
 Перевір кількість рядків у файлах `capture.jsonl` (має бути > 0):
 
@@ -234,7 +285,7 @@ python3 tools/analyze_wifi_angle_dataset.py \
   --out_dir out/angle_dataset
 ```
 
-## 10) Типові проблеми
+## 11) Типові проблеми
 
 - `records=0` у trial:
   - TX не передає або не той порт.
@@ -246,7 +297,7 @@ python3 tools/analyze_wifi_angle_dataset.py \
   - Linux: додай користувача в `dialout` і перезайди в сесію.
   - macOS: закрий інші serial-монітори, перепідключи плату, перевір `ls -l /dev/cu.usbmodem*`.
 
-## 11) Швидкий чекліст перед стартом
+## 12) Швидкий чекліст перед стартом
 
 - TX і RX плати підключені.
 - TX скрипт запущений на Laptop A.
