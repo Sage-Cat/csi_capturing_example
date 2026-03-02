@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DEVICE=""
+TARGET_PROFILE="esp32s3_csi_v1"
 DATASET_ROOT="data/experiments"
 DATASET_ID="$(date -u +%Y%m%d)"
 RUNS_PER_LABEL=5
@@ -25,6 +26,7 @@ Usage:
 
 Options:
   --device <path>            Serial device (default: auto-detect, prefers /dev/esp32_csi)
+  --target-profile <id>      Target environment profile (default: esp32s3_csi_v1)
   --dataset-root <path>      Dataset root (default: data/experiments)
   --dataset-id <id>          Dataset id (default: UTC yyyymmdd)
   --runs <n>                 Runs per label (default: 5)
@@ -42,6 +44,7 @@ USAGE
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --device) DEVICE="$2"; shift 2 ;;
+    --target-profile) TARGET_PROFILE="$2"; shift 2 ;;
     --dataset-root) DATASET_ROOT="$2"; shift 2 ;;
     --dataset-id) DATASET_ID="$2"; shift 2 ;;
     --runs) RUNS_PER_LABEL="$2"; shift 2 ;;
@@ -86,6 +89,7 @@ capture_label() {
   local cmd=(
     ./tools/exp capture
     --experiment static_sign_v1
+    --target-profile "$TARGET_PROFILE"
     --label "$label"
     --runs "$RUNS_PER_LABEL"
     --duration "$DURATION"
@@ -118,6 +122,7 @@ if [[ "$SKIP_DRY_RUN" -eq 0 ]]; then
   cmd=(
     ./tools/exp capture
     --experiment static_sign_v1
+    --target-profile "$TARGET_PROFILE"
     --dry-run-packets "$DRY_RUN_PACKETS"
     --dry-run-timeout "$DRY_RUN_TIMEOUT"
   )

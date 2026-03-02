@@ -8,6 +8,7 @@ This workflow assumes:
 - Laptop B controls ESP32 RX board running `csi_recv` and captures CSI.
 - Human stands between AP and receiver, **back facing receiver**, and performs a static sign.
 - RX serial device defaults to `/dev/esp32_csi` when available; on macOS it is typically `/dev/cu.usbmodem*` or `/dev/tty.usbmodem*`.
+- Common environment profile for this workflow: `esp32s3_csi_v1`.
 
 ## 1) Physical Setup
 
@@ -68,6 +69,7 @@ cd ~/Projects/csi_capture
 ```bash
 cd ~/Projects/csi_capture
 ./tools/exp --list-devices
+./tools/exp --list-target-profiles
 ./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s
 ```
 
@@ -86,6 +88,7 @@ Recommended interactive protocol (captures baseline then hands_up with prompts):
 ```bash
 cd ~/Projects/csi_capture
 ./scripts/run_static_sign_protocol.sh \
+  --target-profile esp32s3_csi_v1 \
   --dataset-id 20260302_subject01_labA \
   --runs 5 \
   --duration 20s \
@@ -99,6 +102,7 @@ On macOS with explicit port:
 ```bash
 ./scripts/run_static_sign_protocol.sh \
   --device /dev/cu.usbmodem1101 \
+  --target-profile esp32s3_csi_v1 \
   --dataset-id 20260302_subject01_labA \
   --runs 5 \
   --duration 20s \

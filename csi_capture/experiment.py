@@ -20,6 +20,13 @@ from csi_capture.core.device import (
     resolve_serial_device,
     validate_serial_device_access,
 )
+from csi_capture.core.environment import (
+    DEFAULT_ENVIRONMENT_PROFILE_ID,
+    EnvironmentProfile,
+    EnvironmentProfileError,
+    format_environment_banner,
+    resolve_environment_profile,
+)
 
 
 SUPPORTED_EXPERIMENT_TYPES = {"distance", "angle"}
@@ -60,6 +67,7 @@ class ExperimentConfig:
     exp_id: str
     run_ids: list[str]
     output_root: Path
+    target_profile: EnvironmentProfile
     scenario_tags: list[str]
     environment: dict[str, str]
     device: DeviceConfig
@@ -187,6 +195,7 @@ def _split_cli_values(values: Optional[list[str]]) -> list[str]:
 
 
 def build_angle_cli_config(args: argparse.Namespace) -> dict[str, Any]:
+    target_profile = resolve_environment_profile(getattr(args, "target_profile", None))
     exp_id = str(args.exp_id or "").strip()
     if not exp_id:
         raise ExperimentConfigError(
@@ -226,12 +235,15 @@ def build_angle_cli_config(args: argparse.Namespace) -> dict[str, Any]:
             "angle CLI mode requires --packets-per-repeat or --duration-s."
         )
 
-    device_path = str(args.device).strip() if args.device is not None else "/dev/esp32_csi"
+    device_path = (
+        str(args.device).strip() if args.device is not None else target_profile.default_serial_device
+    )
     if not device_path:
-        device_path = "/dev/esp32_csi"
+        device_path = target_profile.default_serial_device
 
     return {
         "experiment_type": "angle",
+        "target_profile": target_profile.profile_id,
         "exp_id": exp_id,
         "run_id": run_ids[0],
         "run_ids": run_ids,
@@ -243,7 +255,7 @@ def build_angle_cli_config(args: argparse.Namespace) -> dict[str, Any]:
         },
         "device": {
             "path": device_path,
-            "baud": args.baud,
+            "baud": args.baud if args.baud is not None else target_profile.default_baud,
             "timeout_s": args.timeout_s,
             "reconnect_on_error": bool(args.reconnect_on_error),
             "reconnect_delay_s": args.reconnect_delay_s,
@@ -345,6 +357,14 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
             f"experiment_type must be one of {sorted(SUPPORTED_EXPERIMENT_TYPES)}."
         )
 
+    target_profile_id = str(raw.get("target_profile", DEFAULT_ENVIRONMENT_PROFILE_ID)).strip()
+    if not target_profile_id:
+        target_profile_id = DEFAULT_ENVIRONMENT_PROFILE_ID
+    try:
+        target_profile = resolve_environment_profile(target_profile_id)
+    except EnvironmentProfileError as exc:
+        raise ExperimentConfigError(str(exc)) from exc
+
     exp_id = str(raw.get("exp_id", "")).strip()
     if not exp_id:
         raise ExperimentConfigError("exp_id is required.")
@@ -365,8 +385,11 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
 
     device_raw = raw.get("device", {})
     device_cfg = _require_dict(device_raw, "device")
-    device_path = str(device_cfg.get("path", "/dev/esp32_csi")).strip() or "/dev/esp32_csi"
-    baud = _require_positive_int(device_cfg.get("baud", 921600), "device.baud")
+    device_path = (
+        str(device_cfg.get("path", target_profile.default_serial_device)).strip()
+        or target_profile.default_serial_device
+    )
+    baud = _require_positive_int(device_cfg.get("baud", target_profile.default_baud), "device.baud")
     timeout_s = _require_positive_float(device_cfg.get("timeout_s", 1.0), "device.timeout_s")
     reconnect_on_error = bool(device_cfg.get("reconnect_on_error", False))
     reconnect_delay_s = _require_positive_float(
@@ -416,6 +439,7 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
         exp_id=exp_id,
         run_ids=run_ids,
         output_root=output_root,
+        target_profile=target_profile,
         scenario_tags=scenario_tags,
         environment=environment,
         device=DeviceConfig(
@@ -486,6 +510,7 @@ def _resolve_runtime_device(config_device_path: str, device_override: Optional[s
 def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     output: dict[str, Any] = {
         "experiment_type": config.experiment_type,
+        "target_profile": config.target_profile.profile_id,
         "exp_id": config.exp_id,
         "run_ids": config.run_ids,
         "output_root": str(config.output_root),
@@ -534,6 +559,7 @@ def _trial_metadata(
     metadata: dict[str, Any] = {
         "exp_id": config.exp_id,
         "experiment_type": config.experiment_type,
+        "target_profile": config.target_profile.profile_id,
         "run_id": run_id,
         "trial_id": trial.trial_id,
         "repeat_index": trial.repeat_index,
@@ -561,9 +587,11 @@ def _manifest_template(
     return {
         "exp_id": config.exp_id,
         "experiment_type": config.experiment_type,
+        "target_profile": config.target_profile.profile_id,
         "run_id": run_id,
         "created_at_utc": _utc_now_iso(),
         "status": "running",
+        "environment_profile": config.target_profile.to_dict(),
         "device": {
             "path": runtime_device.path,
             "realpath": runtime_device.realpath,
@@ -604,11 +632,17 @@ def _write_manifest(manifest_path: Path, manifest: dict[str, Any]) -> None:
 
 
 def run_raw_config(
-    raw_config: dict[str, Any], expected_type: Optional[str] = None, device_override: Optional[str] = None
+    raw_config: dict[str, Any],
+    expected_type: Optional[str] = None,
+    device_override: Optional[str] = None,
+    target_profile_override: Optional[str] = None,
 ) -> int:
     if not isinstance(raw_config, dict):
         raise ExperimentConfigError("Top-level config must be a JSON object.")
-    config = _normalize_config(raw_config)
+    raw_config_runtime = dict(raw_config)
+    if target_profile_override and target_profile_override.strip():
+        raw_config_runtime["target_profile"] = target_profile_override.strip()
+    config = _normalize_config(raw_config_runtime)
     if expected_type is not None and config.experiment_type != expected_type:
         raise ExperimentConfigError(
             f"Config experiment_type is '{config.experiment_type}', expected '{expected_type}'."
@@ -616,6 +650,7 @@ def run_raw_config(
 
     runtime_device = _resolve_runtime_device(config.device.path, device_override=device_override)
     validate_serial_device_access(runtime_device.path)
+    print(format_environment_banner(config.target_profile))
     print(format_device_banner(runtime_device))
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -643,7 +678,7 @@ def run_raw_config(
                 config=config,
                 run_id=run_id,
                 runtime_device=runtime_device,
-                config_snapshot=raw_config,
+                config_snapshot=raw_config_runtime,
                 repo_root=repo_root,
             )
             manifest["run_index"] = run_index
@@ -757,10 +792,18 @@ def run_raw_config(
 
 
 def run_config(
-    config_path: Path, expected_type: Optional[str] = None, device_override: Optional[str] = None
+    config_path: Path,
+    expected_type: Optional[str] = None,
+    device_override: Optional[str] = None,
+    target_profile_override: Optional[str] = None,
 ) -> int:
     raw_config, _ = load_experiment_config(config_path)
-    return run_raw_config(raw_config, expected_type=expected_type, device_override=device_override)
+    return run_raw_config(
+        raw_config,
+        expected_type=expected_type,
+        device_override=device_override,
+        target_profile_override=target_profile_override,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -776,6 +819,11 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
     )
+    run_parser.add_argument(
+        "--target-profile",
+        default=None,
+        help=f"Target environment profile id (default from config or {DEFAULT_ENVIRONMENT_PROFILE_ID}).",
+    )
 
     distance_parser = sub.add_parser("distance", help="Run distance experiment config.")
     distance_parser.add_argument("--config", required=True, help="Path to experiment config JSON.")
@@ -783,6 +831,11 @@ def _parser() -> argparse.ArgumentParser:
         "--device",
         default=None,
         help="Serial device override. Use 'auto' to auto-detect (macOS/Linux).",
+    )
+    distance_parser.add_argument(
+        "--target-profile",
+        default=None,
+        help=f"Target environment profile id (default from config or {DEFAULT_ENVIRONMENT_PROFILE_ID}).",
     )
 
     angle_parser = sub.add_parser(
@@ -798,6 +851,11 @@ def _parser() -> argparse.ArgumentParser:
         "--device",
         default=None,
         help="Serial device path (CLI mode) or config override. Use 'auto' to auto-detect.",
+    )
+    angle_parser.add_argument(
+        "--target-profile",
+        default=DEFAULT_ENVIRONMENT_PROFILE_ID,
+        help=f"Target environment profile id (default: {DEFAULT_ENVIRONMENT_PROFILE_ID}).",
     )
     angle_parser.add_argument("--exp-id", default=None, help="Experiment id (required in CLI mode).")
     angle_parser.add_argument(
@@ -937,26 +995,48 @@ def main() -> int:
             if not config_path.exists():
                 print(f"Error: config file does not exist: {config_path}")
                 return 2
-            return run_config(config_path, device_override=args.device)
+            return run_config(
+                config_path,
+                device_override=args.device,
+                target_profile_override=args.target_profile,
+            )
         if args.command == "distance":
             config_path = Path(args.config)
             if not config_path.exists():
                 print(f"Error: config file does not exist: {config_path}")
                 return 2
-            return run_config(config_path, expected_type="distance", device_override=args.device)
+            return run_config(
+                config_path,
+                expected_type="distance",
+                device_override=args.device,
+                target_profile_override=args.target_profile,
+            )
         if args.command == "angle":
             if args.config:
                 config_path = Path(args.config)
                 if not config_path.exists():
                     print(f"Error: config file does not exist: {config_path}")
                     return 2
-                return run_config(config_path, expected_type="angle", device_override=args.device)
+                return run_config(
+                    config_path,
+                    expected_type="angle",
+                    device_override=args.device,
+                    target_profile_override=args.target_profile,
+                )
             raw_config = build_angle_cli_config(args)
-            return run_raw_config(raw_config, expected_type="angle", device_override=None)
+            return run_raw_config(
+                raw_config,
+                expected_type="angle",
+                device_override=None,
+                target_profile_override=args.target_profile,
+            )
         print(f"Error: unknown command {args.command}")
         return 2
     except ExperimentConfigError as err:
         print(f"Error: invalid config: {err}")
+        return 2
+    except EnvironmentProfileError as err:
+        print(f"Error: invalid target profile: {err}")
         return 2
     except DeviceAccessError as err:
         print(f"Error: {err}")

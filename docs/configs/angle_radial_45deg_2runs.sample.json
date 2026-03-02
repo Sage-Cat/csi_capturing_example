@@ -1,5 +1,6 @@
 {
   "experiment_type": "angle",
+  "target_profile": "esp32s3_csi_v1",
   "exp_id": "exp_angle_radial_45deg",
   "run_ids": [
     "001",

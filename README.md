@@ -15,6 +15,7 @@ scripts/                  # Operational scripts (TX/RX, local setup)
 tools/                    # Analysis scripts
 tests/                    # Unit tests
 docs/                     # Notes + config templates + architecture docs
+docs/design/plantuml/     # PlantUML design source + rendered PNG diagrams
 experiments/              # Local raw runs (git-ignored except README/.gitkeep)
 out/                      # Local generated figures/tables/reports (git-ignored except README/.gitkeep)
 data/                     # Small reusable sample data only
@@ -86,6 +87,16 @@ Optional local VS Code bootstrap:
 
 This copies tracked templates from `.vscode.template/` to your local ignored `.vscode/`.
 
+Target environment profile (common across experiments):
+
+```bash
+./tools/exp --list-target-profiles
+```
+
+Current baseline profile:
+
+- `esp32s3_csi_v1`
+
 ## 4) Capture Commands
 
 TX node:
@@ -120,11 +131,13 @@ New unified config-driven runner (distance + angle):
 ```bash
 # Distance experiment from config
 python3 -m csi_capture.experiment distance \
-  --config docs/configs/distance_capture.sample.json
+  --config docs/configs/distance_capture.sample.json \
+  --target-profile esp32s3_csi_v1
 
 # Angle/AoA dataset capture directly from CLI (no JSON editing)
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_radial_demo \
+  --target-profile esp32s3_csi_v1 \
   --runs 2 \
   --angles 0 45 90 135 180 225 270 315 \
   --repeats-per-angle 1 \
@@ -138,6 +151,7 @@ python3 -m csi_capture.experiment angle \
 # Same idea, but with explicit run ids
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_radial_demo \
+  --target-profile esp32s3_csi_v1 \
   --run-ids 001 002 \
   --angles 0 45 90 135 180 225 270 315 \
   --packets-per-repeat 300 \
@@ -163,16 +177,20 @@ New experiment framework CLI (includes `static_sign_v1`):
 # List serial candidates (includes /dev/esp32_csi symlink resolution)
 ./tools/exp --list-devices
 
+# List available target environment profiles
+./tools/exp --list-target-profiles
+
 # Dry-run: open serial and parse N CSI packets, then exit
-./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s
+./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --dry-run-packets 5 --dry-run-timeout 10s
 
 # Capture static sign dataset
-./tools/exp capture --experiment static_sign_v1 --label hands_up --runs 5 --duration 20s
-./tools/exp capture --experiment static_sign_v1 --label baseline --runs 5 --duration 20s
+./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --label hands_up --runs 5 --duration 20s
+./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --label baseline --runs 5 --duration 20s
 
 # Protocol helper (baseline then hands_up with prompts)
 ./scripts/run_static_sign_protocol.sh \
   --device /dev/esp32_csi \
+  --target-profile esp32s3_csi_v1 \
   --dataset-id 20260302_subject01_labA \
   --runs 5 \
   --duration 20s \
@@ -200,6 +218,7 @@ Each captured row stores:
 - `esp_timestamp`
 - `mac`
 - plus metadata tags such as `exp_id`, `experiment_type`, `run_id`, `trial_id`, `device_path`, scenario fields, and ground-truth (`distance_m` or `angle_deg`)
+- all unified outputs also include `target_profile` and environment profile snapshot for reproducibility
 
 Example:
 
@@ -277,3 +296,15 @@ make analyze-stability DATA_DIR=experiments/<exp_id>
 make analyze-angle DATA_DIR=experiments/<exp_id>/angle
 make analyze-all DATA_DIR=experiments/<exp_id>
 ```
+
+## 8) Documentation Index
+
+- Experiment framework docs: `docs/experiments/README.md`
+- Requirements: `docs/experiments/requirements.md`
+- Design package (PlantUML + PNG): `docs/design/plantuml/README.md`
+- Validation report: `docs/experiments/validation_report.md`
+- UA playbooks:
+  - `DISTANCE_EXPERIMENT_UA.md`
+  - `ANGLE_EXPERIMENT_UA.md`
+  - `EXPERIMENT_STATIC_SIGN_UA.md`
+  - `EXPERIMENTS_PLAN_UA.md`

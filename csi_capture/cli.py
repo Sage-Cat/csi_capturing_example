@@ -14,6 +14,13 @@ from csi_capture.core.device import (
     resolve_serial_device,
     validate_serial_device_access,
 )
+from csi_capture.core.environment import (
+    DEFAULT_ENVIRONMENT_PROFILE_ID,
+    EnvironmentProfileError,
+    format_environment_banner,
+    list_environment_profiles,
+    resolve_environment_profile,
+)
 from csi_capture.experiments.distance import run_distance_capture_config
 from csi_capture.experiments.static_sign_v1 import (
     STATIC_SIGN_EXPERIMENT,
@@ -66,6 +73,16 @@ def _print_list_devices() -> None:
         print(f"- {path}{marker}")
 
 
+def _print_list_target_profiles() -> None:
+    profiles = list_environment_profiles()
+    if not profiles:
+        print("No target profiles are registered.")
+        return
+    print("Target environment profiles:")
+    for profile in profiles:
+        print(f"- {profile.profile_id}: {profile.display_name} ({profile.board}, {profile.chip})")
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -80,6 +97,8 @@ def cmd_capture(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        target_profile = resolve_environment_profile(args.target_profile)
+        print(format_environment_banner(target_profile))
         device = resolve_serial_device(cli_device=args.device, env=os.environ)
         print(format_device_banner(device))
         validate_serial_device_access(device.path)
@@ -118,8 +137,15 @@ def cmd_capture(args: argparse.Namespace) -> int:
             subject_id=args.subject_id,
             environment_id=args.environment_id,
             notes=args.notes,
+            target_profile_id=target_profile.profile_id,
         )
-    except (ValueError, DeviceAccessError, RuntimeError, StaticSignError) as err:
+    except (
+        ValueError,
+        DeviceAccessError,
+        EnvironmentProfileError,
+        RuntimeError,
+        StaticSignError,
+    ) as err:
         print(f"Error: {err}")
         return 2
 
@@ -221,8 +247,12 @@ def cmd_distance(args: argparse.Namespace) -> int:
         print(f"Error: config file does not exist: {config_path}")
         return 2
     try:
-        return run_distance_capture_config(config_path)
-    except (ExperimentConfigError, RuntimeError) as err:
+        return run_distance_capture_config(
+            config_path,
+            device_override=args.device,
+            target_profile_override=args.target_profile,
+        )
+    except (ExperimentConfigError, EnvironmentProfileError, RuntimeError) as err:
         print(f"Error: {err}")
         return 2
 
@@ -239,10 +269,16 @@ def build_parser() -> argparse.ArgumentParser:
             "/dev/tty.usbmodem*, /dev/cu.usbmodem*, /dev/tty.usbserial*, /dev/cu.usbserial*"
         ),
     )
+    parser.add_argument(
+        "--list-target-profiles",
+        action="store_true",
+        help="List available target environment profiles.",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("list-devices", help="List serial candidates.")
+    sub.add_parser("list-target-profiles", help="List available target environment profiles.")
 
     capture = sub.add_parser("capture", help="Capture labeled dataset runs.")
     capture.add_argument("--experiment", required=True, help="Experiment name (static_sign_v1)")
@@ -257,6 +293,11 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--dataset-root", default="data/experiments", help="Dataset root directory")
     capture.add_argument("--dataset-id", default=None, help="Dataset id (default: UTC date YYYYMMDD)")
     capture.add_argument("--device", default=None, help="Serial device path override")
+    capture.add_argument(
+        "--target-profile",
+        default=DEFAULT_ENVIRONMENT_PROFILE_ID,
+        help=f"Target environment profile id (default: {DEFAULT_ENVIRONMENT_PROFILE_ID}).",
+    )
     capture.add_argument("--baud", type=int, default=921600, help="Serial baud")
     capture.add_argument("--timeout-s", type=float, default=1.0, help="Serial read timeout seconds")
     capture.add_argument("--subject-id", default=None, help="Optional subject identifier")
@@ -299,6 +340,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     distance = sub.add_parser("distance", help="Compatibility adapter to distance capture config")
     distance.add_argument("--config", required=True, help="Distance config path")
+    distance.add_argument("--device", default=None, help="Serial device path override")
+    distance.add_argument(
+        "--target-profile",
+        default=None,
+        help="Target environment profile id override.",
+    )
 
     return parser
 
@@ -310,6 +357,9 @@ def main() -> int:
     if args.list_devices:
         _print_list_devices()
         return 0
+    if args.list_target_profiles:
+        _print_list_target_profiles()
+        return 0
 
     if args.command is None:
         parser.print_help()
@@ -317,6 +367,9 @@ def main() -> int:
 
     if args.command == "list-devices":
         _print_list_devices()
+        return 0
+    if args.command == "list-target-profiles":
+        _print_list_target_profiles()
         return 0
     if args.command == "capture":
         return cmd_capture(args)

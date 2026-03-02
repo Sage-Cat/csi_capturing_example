@@ -5,6 +5,7 @@
 Це експеримент зі **збору датасету CSI** для кутів навколо точки доступу.
 
 - Тип: `angle`
+- Target profile: `esp32s3_csi_v1`
 - Кути: `0, 45, 90, 135, 180, 225, 270, 315`
 - Кількість прогонів: `2` (`run_001` і `run_002`)
 - Налаштування задаються прямо через командний рядок (без редагування JSON)
@@ -135,6 +136,7 @@ cd /home/sagecat/Projects/csi_capture
 cd /home/sagecat/Projects/csi_capture
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_20260302 \
+  --target-profile esp32s3_csi_v1 \
   --runs 2 \
   --angles 0 45 90 135 180 225 270 315 \
   --repeats-per-angle 1 \
@@ -154,6 +156,7 @@ python3 -m csi_capture.experiment angle \
 ```bash
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_20260302 \
+  --target-profile esp32s3_csi_v1 \
   --runs 2 \
   --angles 0 45 90 135 180 225 270 315 \
   --packets-per-repeat 300 \
@@ -187,6 +190,7 @@ python3 -m csi_capture.experiment angle \
 ```bash
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_manual_runs \
+  --target-profile esp32s3_csi_v1 \
   --run-ids 01 02 \
   --angles 0 45 90 135 180 \
   --packets-per-repeat 250 \
@@ -199,6 +203,7 @@ python3 -m csi_capture.experiment angle \
 ```bash
 python3 -m csi_capture.experiment angle \
   --exp-id exp_angle_duration_mode \
+  --target-profile esp32s3_csi_v1 \
   --run-id testA \
   --angles 0 90 180 270 \
   --duration-s 10 \
@@ -213,6 +218,7 @@ python3 -m csi_capture.experiment angle \
 ```bash
 python3 -m csi_capture.experiment angle \
   --exp-id <назва_експерименту> \
+  --target-profile <id_профілю_платформи> \
   --runs <N_прогонів> \
   --angles <кут1> <кут2> <кут3> ... \
   --repeats-per-angle <N_повторів_на_кут> \
@@ -228,6 +234,7 @@ python3 -m csi_capture.experiment angle \
 Що означають ключові параметри:
 
 - `--exp-id`: ідентифікатор серії експерименту. Краще новий для кожної сесії (наприклад `angle_lab_20260302`).
+- `--target-profile`: профіль платформи/оточення. Поточний базовий варіант: `esp32s3_csi_v1`.
 - `--runs`: скільки повних обходів усіх кутів зробити (наприклад `2`).
 - `--run-id` / `--run-ids`: якщо хочеш задати імена прогонів вручну. Не змішуй з `--runs`.
 - `--angles`: список ground-truth кутів у градусах (наприклад `0 45 90 135 180 225 270 315`).
@@ -245,6 +252,7 @@ python3 -m csi_capture.experiment angle \
 ```bash
 python3 -m csi_capture.experiment angle \
   --exp-id angle_roomA_20260302 \
+  --target-profile esp32s3_csi_v1 \
   --runs 2 \
   --angles 0 45 90 135 180 225 270 315 \
   --repeats-per-angle 1 \

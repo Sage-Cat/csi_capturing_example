@@ -1,118 +1,96 @@
-# Gate 1 Requirements Mapping
+# Requirements Gathering - Unified RSSI/CSI Experiment Program
 
-Date: 2026-03-02
+Date: 2026-03-02  
+Scope: distance, angle, and static_sign_v1 experiments with one current hardware target profile and future multi-board support.
 
-## Explicit Requirements Checklist
+## 1) Problem Statement
 
-Legend:
-- `EXISTS`: already implemented in repo
-- `MISSING`: not implemented yet
-- `PARTIAL`: partially present but needs extension/refactor
+The project needs one repeatable environment contract across all experiments so that:
 
-1. Reusable experiment framework with shared core (`capture`, dataset schema/storage, feature pipeline, models, eval/reporting).
-Status: `MISSING`
-Notes: capture and analysis exist, but analysis is script-specific and not frameworkized.
+- capture logic is reusable
+- hardware/software assumptions are explicit
+- experiment outputs are comparable across runs
+- future ESP32 platform variants can be introduced without redesigning the full pipeline
 
-2. New experiment type `static_sign_v1` for binary classification `{baseline, hands_up}`.
-Status: `MISSING`
+## 2) Stakeholders
 
-3. Do not break existing distance-estimation experiment.
-Status: `EXISTS` (baseline today)
-Notes: must preserve this during refactor.
+- Experiment operator (runs TX/RX setup and capture scripts)
+- Data scientist (uses datasets + metadata for modeling)
+- Maintainer (adds new experiment types and target boards)
+- Reviewer/QA (validates reproducibility and schema quality)
 
-4. CLI with subcommands for `capture`, `train`, `eval`.
-Status: `MISSING`
-Notes: current CLI is `python -m csi_capture.experiment` for capture-only distance/angle configs.
+## 3) Functional Requirements
 
-5. Device behavior:
-   - default `/dev/esp32_csi`
-   - override by CLI and env var
-   - startup prints resolved realpath
-   - permission denied message with dialout guidance
-   - `--list-devices` helper (`/dev/esp32_csi`, `/dev/ttyACM*`, `/dev/ttyUSB*`)
-Status: `PARTIAL`
-Notes: default path + access checks exist; no list-devices helper, no env override in unified CLI, no mandatory resolved-path startup print.
+FR-01 Common target environment profile:
+- Every experiment must resolve a `target_profile` (default now: `esp32s3_csi_v1`).
+- Profile must define board/chip, firmware paths, serial defaults, and baseline toolchain metadata.
 
-6. Capture reproducibility:
-   - stable timestamps
-   - explicit `run_id`
-Status: `PARTIAL`
-Notes: timestamp + run_id exist in current code; not unified for new static-sign dataset layout yet.
+FR-02 Unified metadata propagation:
+- Capture outputs must include `target_profile`.
+- Run-level metadata/manifests must include full environment profile snapshot.
 
-7. static_sign_v1 capture dataset structure:
-   - multiple runs per class
-   - each run stores raw frames + metadata JSON
-   - metadata fields: `experiment_name`, `label`, optional `subject_id`, optional `environment_id`, `device`, `serial_dev`, `start_time`, `end_time`, sampling params, notes
-Status: `MISSING`
+FR-03 Backward-compatible experiment execution:
+- Existing distance and angle workflows must keep working.
+- Legacy command entry points remain available.
 
-8. static_sign_v1 feature extraction:
-   - per-window amplitude statistics: mean, variance, RMS, entropy
-   - configurable window/overlap
-Status: `MISSING`
+FR-04 Configuration quality:
+- Config parsing must reject unknown target profiles.
+- CLI must provide a way to list available target profiles.
 
-9. static_sign_v1 model:
-   - baseline linear SVM or logistic regression
-   - save model artifact + JSON metrics
-Status: `MISSING`
+FR-05 Documentation and design completeness:
+- Requirements, design, plan, and validation artifacts must be versioned.
+- Design diagrams must be available in source (`.puml`) and rendered (`.png`) forms.
 
-10. static_sign_v1 evaluation output:
-   - accuracy, precision, recall, F1
-   - confusion matrix
-   - per-run summary
-Status: `MISSING`
+FR-06 UA experiment execution docs:
+- Ukrainian operational docs must exist per experiment type and include commands, setup, and checklists.
 
-11. Tests:
-   - parser tests
-   - dataset schema validation
-   - feature extraction output shape
-   - CLI `--help` smoke
-   - config validation smoke
-Status: `PARTIAL`
-Notes: parser tests exist; missing new schema/feature/CLI/config smoke tests for framework.
+## 4) Non-Functional Requirements
 
-12. Backwards compatibility:
-   - old distance scripts/commands still run
-   - if schema changes, provide migration tool or adapter reader
-Status: `PARTIAL`
-Notes: distance pipeline works now; adapter needed for any new schema integration.
+NFR-01 Reproducibility:
+- Run manifests include config snapshot, git revision, and resolved device path.
 
-13. Verification artifact:
-   - run commands (tests/lint if present/dry-run capture)
-   - record outputs in `docs/experiments/verification_static_sign_v1.md`
-Status: `MISSING`
+NFR-02 Extensibility:
+- Adding a new board profile should be additive in one registry module.
 
-14. Final review artifact:
-   - checklist PASS/FAIL
-   - release notes
-Status: `MISSING`
+NFR-03 Safety/operability:
+- Serial access checks must provide actionable Linux/macOS guidance.
 
-## Existing Components to Reuse
+NFR-04 Testability:
+- Unit tests cover config validation, environment profile resolution, schema checks, and CLI smoke paths.
 
-- Packet parsing and capture stream:
-  - `csi_capture/parser.py`
-  - `csi_capture/capture.py`
-- Config-driven capture runner:
-  - `csi_capture/experiment.py`
-- Distance analysis/modeling logic (for adapter compatibility):
-  - `tools/analyze_wifi_distance_measurement.py`
-- Existing tests:
-  - `tests/test_parser.py`
-  - `tests/test_capture.py`
-  - `tests/test_experiment.py`
+## 5) Constraints and Assumptions
 
-## Gate 7 Final PASS/FAIL Review
+- Current operational target is a single baseline profile (`esp32s3_csi_v1`).
+- Future multi-target support is planned but not yet activated in field runs.
+- Hardware-in-the-loop validation depends on lab availability and active TX source.
 
-1. Reusable experiment framework with shared core. Final: `PASS`
-2. New `static_sign_v1` binary experiment type. Final: `PASS`
-3. Existing distance-estimation workflow preserved. Final: `PASS`
-4. Unified CLI with `capture/train/eval`. Final: `PASS`
-5. Device handling requirements (`/dev/esp32_csi`, override, realpath print, permission guidance, list-devices). Final: `PASS`
-6. Reproducible capture with run_id and stable timestamps. Final: `PASS`
-7. static_sign run layout + metadata fields. Final: `PASS`
-8. Windowed amplitude features (mean/var/RMS/entropy). Final: `PASS`
-9. Baseline model (linear SVM/logreg) + artifact + metrics JSON. Final: `PASS`
-10. Eval output includes accuracy/precision/recall/F1/confusion/per-run summary. Final: `PASS`
-11. Tests for parser/schema/features/CLI help/config validation. Final: `PASS`
-12. Backward compatibility and adapter reader support. Final: `PASS`
-13. Verification execution log in `docs/experiments/verification_static_sign_v1.md`. Final: `PASS`
-14. Release notes included in docs. Final: `PASS`
+## 6) Acceptance Criteria
+
+AC-01 `target_profile` exists in:
+- config-driven angle/distance runs
+- static_sign capture metadata
+- run manifests
+
+AC-02 CLI behavior:
+- `./tools/exp --list-target-profiles` returns available profiles.
+- unknown profile in config is rejected with a clear error.
+
+AC-03 Design package:
+- `docs/design/plantuml/*.puml` and matching `.png` are present.
+
+AC-04 QA evidence:
+- `python3 -m unittest discover -s tests -p 'test_*.py' -v` passes.
+- validation report documents command results.
+
+## 7) Current Requirement Status
+
+- FR-01: PASS
+- FR-02: PASS
+- FR-03: PASS
+- FR-04: PASS
+- FR-05: PASS
+- FR-06: PASS
+- NFR-01: PASS
+- NFR-02: PASS
+- NFR-03: PASS
+- NFR-04: PASS

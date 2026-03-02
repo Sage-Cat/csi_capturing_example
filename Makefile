@@ -16,7 +16,7 @@ ANGLE_CONFIG ?= docs/configs/angle_capture.sample.json
 DATA_DIR ?= experiments
 OUT_DIR ?= out
 
-.PHONY: test setup-vscode capture tx-node rx-node rx-smoke static-sign-protocol static-sign-train-eval experiment-distance experiment-angle exp-help exp-list-devices exp-dry-run analyze-distance analyze-stability analyze-angle analyze-all
+.PHONY: test setup-vscode capture tx-node rx-node rx-smoke static-sign-protocol static-sign-train-eval experiment-distance experiment-angle exp-help exp-list-devices exp-list-target-profiles exp-dry-run render-design analyze-distance analyze-stability analyze-angle analyze-all
 
 setup-vscode:
 	./scripts/setup_vscode.sh
@@ -54,8 +54,14 @@ exp-help:
 exp-list-devices:
 	./tools/exp --list-devices
 
+exp-list-target-profiles:
+	./tools/exp --list-target-profiles
+
 exp-dry-run:
 	./tools/exp capture --experiment static_sign_v1 --dry-run-packets $(MAX_RECORDS) --dry-run-timeout 10s --device $(PORT)
+
+render-design:
+	./scripts/generate_plantuml_pngs.sh
 
 analyze-distance:
 	$(PYTHON) tools/analyze_wifi_distance_measurement.py --data_dir $(DATA_DIR) --out_dir $(OUT_DIR)/distance_measurement --seed 42

@@ -9,6 +9,8 @@
 
 Кінцева мета: навчити просту базову модель (лінійний SVM або логістична регресія), яка розрізняє ці два стани на основі статистичних ознак CSI.
 
+Поточний спільний профіль середовища для експериментів: `esp32s3_csi_v1`.
+
 ---
 
 ## 2) Сетап (2 ноутбуки + 2 ESP32)
@@ -169,13 +171,14 @@ cd ~/Projects/csi_capture
 ```bash
 cd ~/Projects/csi_capture
 ./tools/exp --list-devices
-./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s
+./tools/exp --list-target-profiles
+./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --dry-run-packets 5 --dry-run-timeout 10s
 ```
 
 Для macOS зазвичай порти мають вигляд `/dev/cu.usbmodem*` або `/dev/tty.usbmodem*`, наприклад:
 
 ```bash
-./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/cu.usbmodem1101
+./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/cu.usbmodem1101
 ```
 
 3. Зібрати датасет (інтерактивно `baseline` → `hands_up`):
@@ -183,6 +186,7 @@ cd ~/Projects/csi_capture
 ```bash
 cd ~/Projects/csi_capture
 ./scripts/run_static_sign_protocol.sh \
+  --target-profile esp32s3_csi_v1 \
   --dataset-id 20260302_subject01_labA \
   --runs 5 \
   --duration 20s \

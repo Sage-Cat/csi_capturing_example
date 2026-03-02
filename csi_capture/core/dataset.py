@@ -103,10 +103,14 @@ def validate_run_metadata(
     if not isinstance(sampling_params, dict):
         raise DatasetValidationError("metadata.sampling_params must be an object")
 
-    for optional in ("subject_id", "environment_id", "notes"):
+    for optional in ("subject_id", "environment_id", "notes", "target_profile", "chip"):
         value = metadata.get(optional)
         if value is not None and not isinstance(value, str):
             raise DatasetValidationError(f"metadata.{optional} must be string or null")
+
+    environment_profile = metadata.get("environment_profile")
+    if environment_profile is not None and not isinstance(environment_profile, dict):
+        raise DatasetValidationError("metadata.environment_profile must be object or null")
 
 
 def load_static_sign_runs(dataset_root: Path) -> list[RunCapture]:

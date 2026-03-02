@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from csi_capture.core.environment import DEFAULT_ENVIRONMENT_PROFILE_ID
 from csi_capture.experiment import (
     ExperimentConfigError,
     build_angle_cli_config,
@@ -22,6 +23,7 @@ class ExperimentConfigTests(unittest.TestCase):
         base = dict(
             config=None,
             device="/dev/esp32_csi",
+            target_profile=DEFAULT_ENVIRONMENT_PROFILE_ID,
             exp_id="exp_angle_cli",
             run_id=None,
             run_ids=None,
@@ -67,6 +69,7 @@ class ExperimentConfigTests(unittest.TestCase):
         _raw, config = self._load(payload)
         self.assertEqual(config.experiment_type, "angle")
         self.assertEqual(config.device.path, "/dev/esp32_csi")
+        self.assertEqual(config.target_profile.profile_id, DEFAULT_ENVIRONMENT_PROFILE_ID)
         self.assertEqual(len(config.trials), 6)
         self.assertIn("angle_deg", config.trials[0].ground_truth)
         self.assertEqual(config.angle_array_config["num_antennas"], 1)
@@ -196,6 +199,30 @@ class ExperimentConfigTests(unittest.TestCase):
         args = self._angle_cli_args(angles=None)
         with self.assertRaises(ExperimentConfigError):
             build_angle_cli_config(args)
+
+    def test_config_accepts_explicit_target_profile(self):
+        payload = {
+            "experiment_type": "distance",
+            "target_profile": DEFAULT_ENVIRONMENT_PROFILE_ID,
+            "exp_id": "exp_distance_test",
+            "run_id": "1",
+            "capture": {"packets_per_repeat": 5},
+            "distance": {"distances_m": [1.0], "repeats_per_distance": 1},
+        }
+        _raw, config = self._load(payload)
+        self.assertEqual(config.target_profile.profile_id, DEFAULT_ENVIRONMENT_PROFILE_ID)
+
+    def test_config_rejects_unknown_target_profile(self):
+        payload = {
+            "experiment_type": "distance",
+            "target_profile": "unknown_profile",
+            "exp_id": "exp_distance_test",
+            "run_id": "1",
+            "capture": {"packets_per_repeat": 5},
+            "distance": {"distances_m": [1.0], "repeats_per_distance": 1},
+        }
+        with self.assertRaises(ExperimentConfigError):
+            self._load(payload)
 
 
 if __name__ == "__main__":

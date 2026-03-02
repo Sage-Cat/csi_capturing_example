@@ -1,5 +1,6 @@
 {
   "experiment": "static_sign_v1",
+  "target_profile": "esp32s3_csi_v1",
   "label": "hands_up",
   "runs": 5,
   "duration_s": 20,

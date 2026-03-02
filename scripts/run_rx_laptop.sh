@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PORT=""
 BAUD="921600"
 TARGET="esp32s3"
+TARGET_PROFILE="esp32s3_csi_v1"
 FORMAT="jsonl"
 MAX_RECORDS="2500"
 
@@ -49,6 +50,7 @@ Device/build options:
   --port <path>            Serial port (default: auto-detect, prefers /dev/esp32_csi)
   --baud <num>             Serial baud (default: 921600)
   --target <chip>          IDF target (default: esp32s3)
+  --target-profile <id>    Environment profile id (default: esp32s3_csi_v1)
   --idf-path <path>        ESP-IDF path (default: $HOME/esp/esp-idf)
   --esp-csi-path <path>    esp-csi path (default: $HOME/esp/esp-csi)
   --skip-build             Do not run idf.py build
@@ -104,6 +106,7 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="$2"; shift 2 ;;
     --baud) BAUD="$2"; shift 2 ;;
     --target) TARGET="$2"; shift 2 ;;
+    --target-profile) TARGET_PROFILE="$2"; shift 2 ;;
     --idf-path) IDF_PATH="$2"; shift 2 ;;
     --esp-csi-path) ESP_CSI_PATH="$2"; shift 2 ;;
     --skip-build) BUILD=0; shift ;;
@@ -160,6 +163,7 @@ if [[ ! -f "$META_FILE" ]]; then
 {
   "exp_id": "$EXP_ID",
   "created_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "target_profile": "$TARGET_PROFILE",
   "channel": $CHANNEL,
   "bandwidth_mhz": $BANDWIDTH_MHZ,
   "packet_rate_hz": $PACKET_RATE_HZ,
@@ -224,6 +228,7 @@ from pathlib import Path
 manifest = {
     "exp_id": "$EXP_ID",
     "experiment_type": "distance",
+    "target_profile": "$TARGET_PROFILE",
     "run_id": "$RUN_ID",
     "trial_id": "distance_${DISTANCE_TAG}m",
     "created_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -242,6 +247,7 @@ manifest = {
         "packet_rate_hz": int("$PACKET_RATE_HZ"),
         "tx_power_dbm": "$TX_POWER_DBM",
         "target": "$TARGET",
+        "target_profile": "$TARGET_PROFILE",
     },
 }
 

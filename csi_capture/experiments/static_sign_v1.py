@@ -16,6 +16,11 @@ from csi_capture.capture import capture_stream, serial_lines
 from csi_capture.core.dataset import RunCapture, load_static_sign_runs
 from csi_capture.core.evaluation import classification_metrics, per_run_summary
 from csi_capture.core.features import extract_window_features
+from csi_capture.core.environment import (
+    DEFAULT_ENVIRONMENT_PROFILE_ID,
+    EnvironmentProfileError,
+    resolve_environment_profile,
+)
 from csi_capture.core.models import create_classifier, load_model_artifact, save_model_artifact
 
 STATIC_SIGN_EXPERIMENT = "static_sign_v1"
@@ -127,9 +132,17 @@ def capture_static_sign_runs(
     subject_id: str | None,
     environment_id: str | None,
     notes: str | None,
+    target_profile_id: str | None = None,
 ) -> list[CaptureSummary]:
     label_norm = _ensure_label(label)
     dataset_id_norm = _ensure_dataset_id(dataset_id)
+    resolved_profile_id = (target_profile_id or DEFAULT_ENVIRONMENT_PROFILE_ID).strip()
+    if not resolved_profile_id:
+        resolved_profile_id = DEFAULT_ENVIRONMENT_PROFILE_ID
+    try:
+        target_profile = resolve_environment_profile(resolved_profile_id)
+    except EnvironmentProfileError as exc:
+        raise StaticSignError(str(exc)) from exc
 
     if runs <= 0:
         raise StaticSignError("runs must be > 0")
@@ -156,6 +169,7 @@ def capture_static_sign_runs(
             "experiment_name": STATIC_SIGN_EXPERIMENT,
             "label": label_norm,
             "run_id": run_id,
+            "target_profile": target_profile.profile_id,
             "subject_id": subject_id,
             "environment_id": environment_id,
         }
@@ -197,7 +211,10 @@ def capture_static_sign_runs(
             "run_id": run_id,
             "subject_id": subject_id,
             "environment_id": environment_id,
-            "device": "esp32_c3",
+            "target_profile": target_profile.profile_id,
+            "environment_profile": target_profile.to_dict(),
+            "device": target_profile.board,
+            "chip": target_profile.chip,
             "serial_dev": device_path,
             "serial_realpath": device_realpath,
             "start_time": start_time,
@@ -379,6 +396,12 @@ def validate_static_sign_config(mode: str, config: dict[str, Any]) -> None:
         raise StaticSignError("config must be a JSON object")
     if config.get("experiment") != STATIC_SIGN_EXPERIMENT:
         raise StaticSignError(f"config.experiment must be '{STATIC_SIGN_EXPERIMENT}'")
+    target_profile = config.get("target_profile")
+    if target_profile is not None:
+        try:
+            resolve_environment_profile(str(target_profile))
+        except EnvironmentProfileError as exc:
+            raise StaticSignError(str(exc)) from exc
 
     mode_norm = mode.strip().lower()
     if mode_norm == "capture":

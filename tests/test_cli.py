@@ -19,6 +19,7 @@ class CLISmokeTests(unittest.TestCase):
         self.assertIn("capture", proc.stdout)
         self.assertIn("train", proc.stdout)
         self.assertIn("eval", proc.stdout)
+        self.assertIn("list-target-profiles", proc.stdout)
 
     def test_validate_config_capture(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,6 +52,17 @@ class CLISmokeTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0)
             self.assertIn("Config validation passed", proc.stdout)
+
+    def test_list_target_profiles_returns_zero(self):
+        proc = subprocess.run(
+            [sys.executable, "-m", "csi_capture.cli", "--list-target-profiles"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("Target environment profiles", proc.stdout)
 
 
 if __name__ == "__main__":

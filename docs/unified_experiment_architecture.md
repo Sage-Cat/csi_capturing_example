@@ -9,6 +9,10 @@ This document defines a shared capture architecture for two experiment types:
 
 The goal is to reuse one capture/session pipeline while keeping existing distance workflows backward compatible.
 
+All experiment types share a common environment profile (`target_profile`). Current baseline profile:
+
+- `esp32s3_csi_v1`
+
 ## Unified Experiment Model
 
 ### Core entities
@@ -17,6 +21,7 @@ The goal is to reuse one capture/session pipeline while keeping existing distanc
 - `Run`: one invocation of the runner (`run_id` unique within `exp_id` + `experiment_type`).
 - `Trial`: one ground-truth point inside a run (`trial_id`), repeated captures allowed.
 - `PacketRecord`: one parsed CSI packet with host timestamp and metadata tags.
+- `TargetProfile`: hardware/toolchain baseline shared by all runs.
 
 ### Shared concepts
 
@@ -40,6 +45,7 @@ Required/common fields:
 
 - `timestamp`, `rssi`, `csi`, `esp_timestamp`, `mac` (existing parser output)
 - `exp_id`, `experiment_type`, `run_id`, `trial_id`, `scenario_tags`
+- `target_profile`
 - `device_path`
 
 Distance-specific field:
@@ -56,6 +62,7 @@ Angle-specific fields:
 Per run, write:
 
 - identity: `exp_id`, `experiment_type`, `run_id`, `created_at_utc`
+- environment profile: `target_profile`, `environment_profile`
 - reproducibility: `git_commit`, `git_dirty`, `config_snapshot`
 - capture settings: `device.path`, `device.baud`, packet limits/duration
 - environment metadata: `room_id`, `notes`, scenario tags

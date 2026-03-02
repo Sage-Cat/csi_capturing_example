@@ -13,7 +13,7 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 Result:
 
-- `Ran 18 tests in 2.298s`
+- `Ran 33 tests`
 - `OK`
 
 ## 2) CLI Help Smoke Test
@@ -26,7 +26,7 @@ Command:
 
 Result (excerpt):
 
-- subcommands include `list-devices`, `capture`, `train`, `eval`, `validate-config`, `distance`
+- subcommands include `list-devices`, `list-target-profiles`, `capture`, `train`, `eval`, `validate-config`, `distance`
 - exit code `0`
 
 ## 3) Config Validation Smoke Test
@@ -48,6 +48,7 @@ Command:
 
 ```bash
 ./tools/exp --list-devices
+./tools/exp --list-target-profiles
 ```
 
 Result:
@@ -63,7 +64,7 @@ Serial device candidates:
 Command:
 
 ```bash
-./tools/exp capture --experiment static_sign_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/esp32_csi
+./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --dry-run-packets 5 --dry-run-timeout 10s --device /dev/esp32_csi
 ```
 
 Result:
