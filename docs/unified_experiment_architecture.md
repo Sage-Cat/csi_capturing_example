@@ -100,6 +100,7 @@ experiments/<exp_id>/<scenario>/run_<run_id>/distance_<X>m.jsonl
 ## Reproducibility and Metadata
 
 - deterministic naming includes `experiment_type` and `run_id`.
+- optional `run_ids` in config allows multiple runs from one command (for repeated sweeps).
 - each run writes `manifest.json` with full config snapshot.
 - include git revision (`git rev-parse HEAD`) and dirty flag (if detectable).
 - include serial device path (default `/dev/esp32_csi`).

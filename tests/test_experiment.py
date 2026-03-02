@@ -35,6 +35,7 @@ class ExperimentConfigTests(unittest.TestCase):
         self.assertEqual(len(config.trials), 6)
         self.assertIn("angle_deg", config.trials[0].ground_truth)
         self.assertEqual(config.angle_array_config["num_antennas"], 1)
+        self.assertEqual(config.capture.inter_trial_pause_s, 0.0)
 
     def test_distance_config_builds_trials(self):
         payload = {
@@ -50,6 +51,46 @@ class ExperimentConfigTests(unittest.TestCase):
         self.assertEqual(len(config.trials), 6)
         self.assertEqual(config.trials[0].ground_truth["distance_m"], 1.0)
         self.assertEqual(config.scenario_tags, ["LoS"])
+        self.assertEqual(config.run_ids, ["1"])
+
+    def test_config_accepts_multiple_run_ids(self):
+        payload = {
+            "experiment_type": "angle",
+            "exp_id": "exp_angle_test",
+            "run_id": "legacy_fallback",
+            "run_ids": ["run_a", "run_b"],
+            "capture": {"packets_per_repeat": 10},
+            "angle": {
+                "angles": [0, 45, 90],
+                "repeats_per_angle": 1,
+                "array_config": {"num_antennas": 1, "antenna_spacing_m": None},
+                "geometry": {
+                    "orientation_reference": "0 deg points to AP",
+                    "measurement_positions": "AP center, receiver on circle",
+                },
+            },
+        }
+        _raw, config = self._load(payload)
+        self.assertEqual(config.run_ids, ["run_a", "run_b"])
+
+    def test_config_rejects_empty_run_ids(self):
+        payload = {
+            "experiment_type": "angle",
+            "exp_id": "exp_angle_test",
+            "run_ids": [],
+            "capture": {"packets_per_repeat": 10},
+            "angle": {
+                "angles": [0, 45, 90],
+                "repeats_per_angle": 1,
+                "array_config": {"num_antennas": 1, "antenna_spacing_m": None},
+                "geometry": {
+                    "orientation_reference": "0 deg points to AP",
+                    "measurement_positions": "AP center, receiver on circle",
+                },
+            },
+        }
+        with self.assertRaises(ExperimentConfigError):
+            self._load(payload)
 
     def test_capture_budget_is_required(self):
         payload = {
@@ -58,6 +99,24 @@ class ExperimentConfigTests(unittest.TestCase):
             "run_id": "1",
             "capture": {},
             "distance": {"distances_m": [1.0], "repeats_per_distance": 1},
+        }
+        with self.assertRaises(ExperimentConfigError):
+            self._load(payload)
+
+    def test_inter_trial_pause_must_be_non_negative(self):
+        payload = {
+            "experiment_type": "angle",
+            "exp_id": "exp_angle_test",
+            "capture": {"packets_per_repeat": 5, "inter_trial_pause_s": -1},
+            "angle": {
+                "angles": [0],
+                "repeats_per_angle": 1,
+                "array_config": {"num_antennas": 1, "antenna_spacing_m": None},
+                "geometry": {
+                    "orientation_reference": "0 deg points to AP",
+                    "measurement_positions": "AP center, receiver on circle",
+                },
+            },
         }
         with self.assertRaises(ExperimentConfigError):
             self._load(payload)

@@ -107,9 +107,14 @@ python3 -m csi_capture.experiment distance \
 # Angle/AoA dataset capture from config
 python3 -m csi_capture.experiment angle \
   --config docs/configs/angle_capture.sample.json
+
+# Radial angle sweep around AP center: 0,45,...,315 with 2 runs
+python3 -m csi_capture.experiment angle \
+  --config docs/configs/angle_radial_45deg_2runs.sample.json
 ```
 
 Config defaults use `/dev/esp32_csi` as the RX serial path.
+`run_ids` can be set in config to execute multiple full sweeps in one command.
 
 New experiment framework CLI (includes `static_sign_v1`):
 
@@ -123,6 +128,15 @@ New experiment framework CLI (includes `static_sign_v1`):
 # Capture static sign dataset
 ./tools/exp capture --experiment static_sign_v1 --label hands_up --runs 5 --duration 20s
 ./tools/exp capture --experiment static_sign_v1 --label baseline --runs 5 --duration 20s
+
+# Protocol helper (baseline then hands_up with prompts)
+./scripts/run_static_sign_protocol.sh \
+  --device /dev/esp32_csi \
+  --dataset-id 20260302_subject01_labA \
+  --runs 5 \
+  --duration 20s \
+  --subject-id subject01 \
+  --environment-id labA
 ```
 
 Device selection precedence for `tools/exp capture`:
@@ -130,6 +144,10 @@ Device selection precedence for `tools/exp capture`:
 1. `--device`
 2. env var `CSI_CAPTURE_DEVICE` (or `ESP32_CSI_DEVICE`)
 3. default `/dev/esp32_csi`
+
+For complete AP+RX two-laptop setup instructions, see:
+
+- `docs/experiments/static_sign_v1_two_laptop_workflow.md`
 
 ## 5) Experiment Data Structure
 
@@ -211,8 +229,8 @@ make setup-vscode
 make test
 make tx-node PORT=/dev/ttyACM0
 make rx-smoke PORT=/dev/ttyACM1 EXP_ID=exp_smoke
-make experiment-distance CONFIG=docs/configs/distance_capture.sample.json
-make experiment-angle CONFIG=docs/configs/angle_capture.sample.json
+make experiment-distance DISTANCE_CONFIG=docs/configs/distance_capture.sample.json
+make experiment-angle ANGLE_CONFIG=docs/configs/angle_radial_45deg_2runs.sample.json
 make analyze-distance DATA_DIR=experiments/<exp_id>
 make analyze-stability DATA_DIR=experiments/<exp_id>
 make analyze-angle DATA_DIR=experiments/<exp_id>/angle

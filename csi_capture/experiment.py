@@ -39,6 +39,7 @@ class CaptureConfig:
     output_format: str
     packets_per_repeat: Optional[int]
     duration_s: Optional[float]
+    inter_trial_pause_s: float
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class TrialSpec:
 class ExperimentConfig:
     experiment_type: str
     exp_id: str
-    run_id: str
+    run_ids: list[str]
     output_root: Path
     scenario_tags: list[str]
     environment: dict[str, str]
@@ -118,6 +119,16 @@ def _require_positive_float(value: Any, field_name: str) -> float:
     return parsed
 
 
+def _require_non_negative_float(value: Any, field_name: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ExperimentConfigError(f"{field_name} must be a non-negative number.") from exc
+    if parsed < 0.0:
+        raise ExperimentConfigError(f"{field_name} must be >= 0.")
+    return parsed
+
+
 def _require_float(value: Any, field_name: str) -> float:
     try:
         return float(value)
@@ -129,6 +140,30 @@ def _sanitize_token(value: float) -> str:
     text = f"{value:g}"
     text = text.replace("-", "neg").replace(".", "p")
     return text
+
+
+def _normalize_run_ids(run_id: str, run_ids_raw: Any) -> list[str]:
+    if run_ids_raw is None:
+        return [run_id]
+    if not isinstance(run_ids_raw, list):
+        raise ExperimentConfigError("run_ids must be a non-empty list of strings.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for idx, item in enumerate(run_ids_raw):
+        if not isinstance(item, str):
+            raise ExperimentConfigError(f"run_ids[{idx}] must be a string.")
+        token = item.strip()
+        if not token:
+            raise ExperimentConfigError(f"run_ids[{idx}] cannot be empty.")
+        if token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+
+    if not normalized:
+        raise ExperimentConfigError("run_ids must contain at least one non-empty id.")
+    return normalized
 
 
 def _build_distance_trials(distance_cfg: dict[str, Any]) -> list[TrialSpec]:
@@ -213,6 +248,7 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
     run_id = str(raw.get("run_id", _default_run_id())).strip()
     if not run_id:
         raise ExperimentConfigError("run_id cannot be empty.")
+    run_ids = _normalize_run_ids(run_id=run_id, run_ids_raw=raw.get("run_ids"))
 
     output_root_raw = str(raw.get("output_root", "experiments")).strip()
     output_root = Path(output_root_raw) if output_root_raw else Path("experiments")
@@ -257,6 +293,9 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
         raise ExperimentConfigError(
             "capture.packets_per_repeat and capture.duration_s are mutually exclusive."
         )
+    inter_trial_pause_s = _require_non_negative_float(
+        capture_cfg.get("inter_trial_pause_s", 0.0), "capture.inter_trial_pause_s"
+    )
 
     angle_array_config: Optional[dict[str, Any]] = None
     angle_geometry: Optional[dict[str, Any]] = None
@@ -272,7 +311,7 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
     return ExperimentConfig(
         experiment_type=experiment_type,
         exp_id=exp_id,
-        run_id=run_id,
+        run_ids=run_ids,
         output_root=output_root,
         scenario_tags=scenario_tags,
         environment=environment,
@@ -287,6 +326,7 @@ def _normalize_config(raw: dict[str, Any]) -> ExperimentConfig:
             output_format=output_format,
             packets_per_repeat=packets_per_repeat,
             duration_s=duration_s,
+            inter_trial_pause_s=inter_trial_pause_s,
         ),
         trials=trials,
         angle_array_config=angle_array_config,
@@ -337,7 +377,7 @@ def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     output: dict[str, Any] = {
         "experiment_type": config.experiment_type,
         "exp_id": config.exp_id,
-        "run_id": config.run_id,
+        "run_ids": config.run_ids,
         "output_root": str(config.output_root),
         "scenario_tags": config.scenario_tags,
         "environment": config.environment,
@@ -352,8 +392,11 @@ def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
             "output_format": config.capture.output_format,
             "packets_per_repeat": config.capture.packets_per_repeat,
             "duration_s": config.capture.duration_s,
+            "inter_trial_pause_s": config.capture.inter_trial_pause_s,
         },
     }
+    if len(config.run_ids) == 1:
+        output["run_id"] = config.run_ids[0]
     if config.experiment_type == "distance":
         distances = [trial.ground_truth["distance_m"] for trial in config.trials]
         output["distance"] = {
@@ -375,11 +418,11 @@ def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     return output
 
 
-def _trial_metadata(config: ExperimentConfig, trial: TrialSpec) -> dict[str, Any]:
+def _trial_metadata(config: ExperimentConfig, trial: TrialSpec, run_id: str) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "exp_id": config.exp_id,
         "experiment_type": config.experiment_type,
-        "run_id": config.run_id,
+        "run_id": run_id,
         "trial_id": trial.trial_id,
         "repeat_index": trial.repeat_index,
         "scenario_tags": config.scenario_tags,
@@ -397,6 +440,7 @@ def _trial_metadata(config: ExperimentConfig, trial: TrialSpec) -> dict[str, Any
 
 def _manifest_template(
     config: ExperimentConfig,
+    run_id: str,
     config_snapshot: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -404,7 +448,7 @@ def _manifest_template(
     return {
         "exp_id": config.exp_id,
         "experiment_type": config.experiment_type,
-        "run_id": config.run_id,
+        "run_id": run_id,
         "created_at_utc": _utc_now_iso(),
         "status": "running",
         "device": {
@@ -420,6 +464,7 @@ def _manifest_template(
             "output_format": config.capture.output_format,
             "packets_per_repeat": config.capture.packets_per_repeat,
             "duration_s": config.capture.duration_s,
+            "inter_trial_pause_s": config.capture.inter_trial_pause_s,
         },
         "angle": {
             "array_config": config.angle_array_config,
@@ -452,33 +497,7 @@ def run_config(config_path: Path, expected_type: Optional[str] = None) -> int:
 
     ensure_serial_port_access(config.device.path)
 
-    run_dir = config.output_root / config.exp_id / config.experiment_type / f"run_{config.run_id}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = run_dir / "manifest.json"
     repo_root = Path(__file__).resolve().parent.parent
-    manifest = _manifest_template(config=config, config_snapshot=raw_config, repo_root=repo_root)
-
-    trial_entries: list[dict[str, Any]] = []
-    for trial in config.trials:
-        trial_dir = run_dir / f"trial_{trial.trial_id}"
-        extension = "jsonl" if config.capture.output_format == "jsonl" else "csv"
-        out_file = trial_dir / f"capture.{extension}"
-        entry = {
-            "trial_id": trial.trial_id,
-            "repeat_index": trial.repeat_index,
-            **trial.ground_truth,
-            "output_file": str(out_file),
-            "status": "pending",
-            "records_captured": 0,
-        }
-        trial_entries.append(entry)
-    manifest["trials"] = trial_entries
-    _write_manifest(manifest_path, manifest)
-
-    print(
-        f"Starting {config.experiment_type} experiment: exp_id={config.exp_id}, "
-        f"run_id={config.run_id}, trials={len(config.trials)}, device={config.device.path}"
-    )
 
     stream = serial_lines(
         port=config.device.path,
@@ -489,59 +508,127 @@ def run_config(config_path: Path, expected_type: Optional[str] = None) -> int:
         yield_on_timeout=config.capture.duration_s is not None,
     )
     total_records = 0
+    run_summaries: list[dict[str, Any]] = []
+    active_manifest: Optional[dict[str, Any]] = None
+    active_manifest_path: Optional[Path] = None
 
     try:
-        for idx, trial in enumerate(config.trials):
-            trial_dir = run_dir / f"trial_{trial.trial_id}"
-            trial_dir.mkdir(parents=True, exist_ok=True)
-            extension = "jsonl" if config.capture.output_format == "jsonl" else "csv"
-            out_file = trial_dir / f"capture.{extension}"
-            trial_entry = manifest["trials"][idx]
-            trial_entry["status"] = "running"
-            trial_entry["started_at_utc"] = _utc_now_iso()
-            _write_manifest(manifest_path, manifest)
-
-            metadata = _trial_metadata(config=config, trial=trial)
-            with out_file.open("w", encoding="utf-8", newline="") as out_handle:
-                if config.capture.packets_per_repeat is not None:
-                    written = capture_stream(
-                        lines=stream,
-                        out=out_handle,
-                        output_format=config.capture.output_format,
-                        max_records=config.capture.packets_per_repeat,
-                        metadata=metadata,
-                    )
-                else:
-                    assert config.capture.duration_s is not None
-                    written = capture_stream(
-                        lines=_duration_limited_lines(stream, config.capture.duration_s),
-                        out=out_handle,
-                        output_format=config.capture.output_format,
-                        max_records=None,
-                        metadata=metadata,
-                    )
-
-            trial_entry["status"] = "completed"
-            trial_entry["records_captured"] = written
-            trial_entry["ended_at_utc"] = _utc_now_iso()
-            total_records += written
-            _write_manifest(manifest_path, manifest)
-            print(
-                f"Completed trial {idx + 1}/{len(config.trials)}: "
-                f"{trial.trial_id} -> {written} records"
+        run_count = len(config.run_ids)
+        for run_index, run_id in enumerate(config.run_ids, start=1):
+            run_dir = config.output_root / config.exp_id / config.experiment_type / f"run_{run_id}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = run_dir / "manifest.json"
+            manifest = _manifest_template(
+                config=config,
+                run_id=run_id,
+                config_snapshot=raw_config,
+                repo_root=repo_root,
             )
+            manifest["run_index"] = run_index
+            manifest["run_count"] = run_count
+
+            trial_entries: list[dict[str, Any]] = []
+            for trial in config.trials:
+                trial_dir = run_dir / f"trial_{trial.trial_id}"
+                extension = "jsonl" if config.capture.output_format == "jsonl" else "csv"
+                out_file = trial_dir / f"capture.{extension}"
+                entry = {
+                    "trial_id": trial.trial_id,
+                    "repeat_index": trial.repeat_index,
+                    **trial.ground_truth,
+                    "output_file": str(out_file),
+                    "status": "pending",
+                    "records_captured": 0,
+                }
+                trial_entries.append(entry)
+            manifest["trials"] = trial_entries
+            _write_manifest(manifest_path, manifest)
+            active_manifest = manifest
+            active_manifest_path = manifest_path
+
+            print(
+                f"Starting {config.experiment_type} experiment: exp_id={config.exp_id}, "
+                f"run_id={run_id} ({run_index}/{run_count}), trials={len(config.trials)}, "
+                f"device={config.device.path}"
+            )
+
+            run_total_records = 0
+            for idx, trial in enumerate(config.trials):
+                trial_dir = run_dir / f"trial_{trial.trial_id}"
+                trial_dir.mkdir(parents=True, exist_ok=True)
+                extension = "jsonl" if config.capture.output_format == "jsonl" else "csv"
+                out_file = trial_dir / f"capture.{extension}"
+                trial_entry = manifest["trials"][idx]
+                trial_entry["status"] = "running"
+                trial_entry["started_at_utc"] = _utc_now_iso()
+                _write_manifest(manifest_path, manifest)
+
+                metadata = _trial_metadata(config=config, trial=trial, run_id=run_id)
+                with out_file.open("w", encoding="utf-8", newline="") as out_handle:
+                    if config.capture.packets_per_repeat is not None:
+                        written = capture_stream(
+                            lines=stream,
+                            out=out_handle,
+                            output_format=config.capture.output_format,
+                            max_records=config.capture.packets_per_repeat,
+                            metadata=metadata,
+                        )
+                    else:
+                        assert config.capture.duration_s is not None
+                        written = capture_stream(
+                            lines=_duration_limited_lines(stream, config.capture.duration_s),
+                            out=out_handle,
+                            output_format=config.capture.output_format,
+                            max_records=None,
+                            metadata=metadata,
+                        )
+
+                trial_entry["status"] = "completed"
+                trial_entry["records_captured"] = written
+                trial_entry["ended_at_utc"] = _utc_now_iso()
+                run_total_records += written
+                total_records += written
+                _write_manifest(manifest_path, manifest)
+                print(
+                    f"Completed run {run_id} trial {idx + 1}/{len(config.trials)}: "
+                    f"{trial.trial_id} -> {written} records"
+                )
+                if idx < len(config.trials) - 1 and config.capture.inter_trial_pause_s > 0.0:
+                    pause_s = config.capture.inter_trial_pause_s
+                    print(
+                        f"Pause {pause_s:.1f}s before next trial. "
+                        "Move receiver to the next angle mark now."
+                    )
+                    time.sleep(pause_s)
+
+            manifest["status"] = "completed"
+            manifest["ended_at_utc"] = _utc_now_iso()
+            manifest["total_records"] = run_total_records
+            _write_manifest(manifest_path, manifest)
+            print(f"Run complete: run_id={run_id}, records={run_total_records}")
+            print(f"Manifest: {manifest_path}")
+
+            run_summaries.append(
+                {"run_id": run_id, "records": run_total_records, "manifest_path": str(manifest_path)}
+            )
+            active_manifest = None
+            active_manifest_path = None
     except KeyboardInterrupt:
-        manifest["status"] = "interrupted"
-        manifest["ended_at_utc"] = _utc_now_iso()
-        _write_manifest(manifest_path, manifest)
+        if active_manifest is not None and active_manifest_path is not None:
+            active_manifest["status"] = "interrupted"
+            active_manifest["ended_at_utc"] = _utc_now_iso()
+            _write_manifest(active_manifest_path, active_manifest)
         raise
 
-    manifest["status"] = "completed"
-    manifest["ended_at_utc"] = _utc_now_iso()
-    manifest["total_records"] = total_records
-    _write_manifest(manifest_path, manifest)
-    print(f"Run complete. Total records: {total_records}")
-    print(f"Manifest: {manifest_path}")
+    print(
+        f"Experiment complete. exp_id={config.exp_id}, runs={len(config.run_ids)}, "
+        f"total_records={total_records}"
+    )
+    for summary in run_summaries:
+        print(
+            f"  run_id={summary['run_id']} records={summary['records']} "
+            f"manifest={summary['manifest_path']}"
+        )
     return 0
 
 

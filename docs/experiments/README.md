@@ -195,6 +195,10 @@ Execution logs are recorded in:
 
 - `docs/experiments/verification_static_sign_v1.md`
 
+Two-laptop execution reference:
+
+- `docs/experiments/static_sign_v1_two_laptop_workflow.md`
+
 ## Release Notes
 
 - Added reusable core framework modules for device/dataset/features/models/evaluation.

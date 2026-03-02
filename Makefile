@@ -1,6 +1,11 @@
 PYTHON ?= python3
 PORT ?= /dev/ttyACM1
 BAUD ?= 921600
+DATASET_ID ?= $$(date -u +%Y%m%d)
+RUNS ?= 5
+DURATION ?= 20s
+SUBJECT_ID ?= subject01
+ENVIRONMENT_ID ?= labA
 EXP_ID ?= smoke_$(shell date +%Y%m%d_%H%M%S)
 SCENARIO ?= LoS
 RUN_ID ?= 1
@@ -11,7 +16,7 @@ ANGLE_CONFIG ?= docs/configs/angle_capture.sample.json
 DATA_DIR ?= experiments
 OUT_DIR ?= out
 
-.PHONY: test setup-vscode capture tx-node rx-smoke experiment-distance experiment-angle exp-help exp-list-devices exp-dry-run analyze-distance analyze-stability analyze-angle analyze-all
+.PHONY: test setup-vscode capture tx-node rx-node rx-smoke static-sign-protocol static-sign-train-eval experiment-distance experiment-angle exp-help exp-list-devices exp-dry-run analyze-distance analyze-stability analyze-angle analyze-all
 
 setup-vscode:
 	./scripts/setup_vscode.sh
@@ -25,8 +30,17 @@ capture:
 tx-node:
 	./scripts/run_tx_laptop.sh --port $(PORT)
 
+rx-node:
+	./scripts/run_rx_csi_node.sh --port $(PORT)
+
 rx-smoke:
 	./scripts/run_rx_laptop.sh --port $(PORT) --exp-id $(EXP_ID) --scenario $(SCENARIO) --run-id $(RUN_ID) --distance-m $(DISTANCE_M) --max-records $(MAX_RECORDS) --skip-build --skip-flash
+
+static-sign-protocol:
+	./scripts/run_static_sign_protocol.sh --device $(PORT) --dataset-id $(DATASET_ID) --runs $(RUNS) --duration $(DURATION) --subject-id $(SUBJECT_ID) --environment-id $(ENVIRONMENT_ID)
+
+static-sign-train-eval:
+	./scripts/run_static_sign_train_eval.sh --dataset-id $(DATASET_ID)
 
 experiment-distance:
 	$(PYTHON) -m csi_capture.experiment distance --config $(DISTANCE_CONFIG)
