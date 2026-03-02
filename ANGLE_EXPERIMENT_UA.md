@@ -27,17 +27,71 @@
 
 ## 4) Підготовка перед запуском
 
-На обох ноутбуках:
+Зроби ці кроки **на обох ноутбуках** (TX і RX).
+
+### 4.1 Системні пакети (Ubuntu/Debian)
+
+```bash
+sudo apt update
+sudo apt install -y \
+  git wget flex bison gperf python3 python3-pip python3-venv python3-serial \
+  cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+```
+
+Додай користувача в `dialout` (доступ до `/dev/ttyACM*`):
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+Після цього вийди з сесії і зайди знову (або перезавантаж ноутбук).
+
+### 4.2 Встановлення ESP-IDF
+
+```bash
+mkdir -p ~/esp
+cd ~/esp
+git clone -b v5.5.3 --recursive https://github.com/espressif/esp-idf.git
+cd esp-idf
+./install.sh esp32s3
+```
+
+Перевір, що файл існує:
+
+```bash
+ls -l ~/esp/esp-idf/export.sh
+```
+
+### 4.3 Встановлення esp-csi
+
+```bash
+cd ~/esp
+git clone https://github.com/espressif/esp-csi.git
+```
+
+### 4.4 Python-залежності проєкту
 
 ```bash
 cd /home/sagecat/Projects/csi_capture
 python3 -m pip install -r requirements.txt
 ```
 
-На RX-ноуті перевір пристрій:
+### 4.5 Перевірка RX-девайсу
+
+На RX-ноуті:
 
 ```bash
 ls -l /dev/esp32_csi
+```
+
+Якщо скрипт пише `export.sh not found`, значить ESP-IDF встановлено не в `~/esp/esp-idf`.
+У такому разі передай явні шляхи:
+
+```bash
+./scripts/run_tx_laptop.sh \
+  --idf-path /фактичний/шлях/до/esp-idf \
+  --esp-csi-path /фактичний/шлях/до/esp-csi \
+  --port /dev/ttyACM0
 ```
 
 ## 5) Запуск експерименту
