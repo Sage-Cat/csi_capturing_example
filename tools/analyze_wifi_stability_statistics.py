@@ -4,32 +4,71 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import binascii
 import json
 import logging
 import math
 import re
+import sys
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from csi_capture.analysis.common import (
+    decode_payload_bytes,
+    discover_files,
+    infer_distance_from_path,
+    infer_run_id_from_path,
+    infer_scenario_from_path,
+    iter_records,
+    normalize_scenario,
+    parse_csi_interleaved,
+    parse_numeric_array,
+)
+
+try:
+    import matplotlib.pyplot as plt
+
+    MATPLOTLIB_AVAILABLE = True
+    MATPLOTLIB_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - environment-dependent
+    plt = None  # type: ignore[assignment]
+    MATPLOTLIB_AVAILABLE = False
+    MATPLOTLIB_IMPORT_ERROR = exc
+
+try:
+    from sklearn.decomposition import PCA
+    from sklearn.metrics import silhouette_score
+    from sklearn.preprocessing import StandardScaler
+
+    SKLEARN_AVAILABLE = True
+    SKLEARN_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - environment-dependent
+    PCA = None  # type: ignore[assignment]
+    silhouette_score = None  # type: ignore[assignment]
+    StandardScaler = None  # type: ignore[assignment]
+    SKLEARN_AVAILABLE = False
+    SKLEARN_IMPORT_ERROR = exc
 
 LOGGER = logging.getLogger("wifi_channel_stats")
 
-SCENARIO_CANONICAL = {
-    "los": "LoS",
-    "nlos": "NLoS",
-    "nlos_furniture": "NLoS_furniture",
-    "nlos_human": "NLoS_human",
-    "nlos_wall": "NLoS_wall",
-}
 EPS = 1e-8
+
+
+def _require_runtime_stack() -> None:
+    if not MATPLOTLIB_AVAILABLE:
+        raise RuntimeError(
+            "matplotlib is unavailable for plotting; fix the local scientific Python stack."
+        ) from MATPLOTLIB_IMPORT_ERROR
+    if not SKLEARN_AVAILABLE:
+        raise RuntimeError(
+            "scikit-learn is unavailable for stability analysis; fix the local scientific Python stack."
+        ) from SKLEARN_IMPORT_ERROR
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,67 +98,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def normalize_scenario(raw: Any) -> str:
-    """Normalize scenario values to consistent labels."""
-    if raw is None:
-        return "unknown"
-    text = str(raw).strip()
-    if not text:
-        return "unknown"
-    key = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
-    if "nlos" in key:
-        if "furniture" in key:
-            return SCENARIO_CANONICAL["nlos_furniture"]
-        if "human" in key or "person" in key:
-            return SCENARIO_CANONICAL["nlos_human"]
-        if "wall" in key:
-            return SCENARIO_CANONICAL["nlos_wall"]
-        return SCENARIO_CANONICAL["nlos"]
-    if "los" in key:
-        return SCENARIO_CANONICAL["los"]
-    return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
-
-
-def infer_distance_from_path(path: Path) -> float | None:
-    """Infer distance from filename if possible."""
-    match = re.search(r"distance[_-](\d+(?:p\d+)?)m", path.name.lower())
-    if not match:
-        return None
-    token = match.group(1).replace("p", ".")
-    try:
-        return float(token)
-    except ValueError:
-        return None
-
-
-def infer_run_id_from_path(path: Path) -> str | None:
-    """Infer run id from directory names like run_1."""
-    for part in path.parts:
-        match = re.fullmatch(r"run[_-]?([A-Za-z0-9]+)", part, flags=re.IGNORECASE)
-        if match:
-            return match.group(1)
-    return None
-
-
-def infer_scenario_from_path(path: Path) -> str | None:
-    """Infer scenario from path parts."""
-    for part in path.parts:
-        norm = normalize_scenario(part)
-        if norm == "LoS" or norm.startswith("NLoS"):
-            return norm
-    return None
-
-
 def discover_input_files(data_dir: Path) -> list[Path]:
     """Find CSV/JSONL files recursively."""
-    if not data_dir.exists():
-        raise FileNotFoundError(f"data_dir does not exist: {data_dir}")
-    files = sorted(
-        [p for p in data_dir.rglob("*") if p.is_file() and p.suffix.lower() in (".csv", ".jsonl")]
-    )
-    if not files:
-        raise FileNotFoundError(f"No .csv/.jsonl files found under: {data_dir}")
-    return files
+    return discover_files(data_dir, suffixes={".csv", ".jsonl"})
 
 
 def parse_float(value: Any, field_name: str) -> float:
@@ -128,123 +109,6 @@ def parse_float(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid {field_name} value: {value!r}") from exc
-
-
-def parse_numeric_array(value: Any) -> np.ndarray | None:
-    """Parse numeric list/array from value."""
-    if isinstance(value, np.ndarray):
-        if value.ndim != 1:
-            return None
-        return value.astype(np.float32, copy=False)
-    if isinstance(value, (list, tuple)) and value:
-        try:
-            return np.asarray(value, dtype=np.float32)
-        except (TypeError, ValueError):
-            return None
-    if isinstance(value, str):
-        text = value.strip()
-        if text.startswith("[") and text.endswith("]"):
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                return None
-            return parse_numeric_array(parsed)
-    return None
-
-
-def decode_payload_bytes(
-    payload: bytes, csi_len_hint: int | None = None, bit_hint: int | None = None
-) -> np.ndarray:
-    """Decode IQ payload as signed int8 or little-endian int16."""
-    if not payload:
-        raise ValueError("Empty CSI payload.")
-    if bit_hint in (8, 16):
-        widths = [bit_hint // 8]
-    else:
-        widths = [1, 2]
-    candidates: list[tuple[int, np.ndarray, int]] = []
-    for width in widths:
-        pair_bytes = width * 2
-        if len(payload) % pair_bytes != 0:
-            continue
-        dtype = np.int8 if width == 1 else np.dtype("<i2")
-        values = np.frombuffer(payload, dtype=dtype).astype(np.float32)
-        score = 0
-        if csi_len_hint is not None:
-            if csi_len_hint == len(payload):
-                score += 3
-            if csi_len_hint == len(values):
-                score += 2
-            if csi_len_hint == len(values) // 2:
-                score += 2
-        candidates.append((score, values, width))
-    if not candidates:
-        raise ValueError(f"Cannot infer CSI payload width for {len(payload)} bytes.")
-    candidates.sort(key=lambda x: (x[0], x[2]), reverse=True)
-    return candidates[0][1]
-
-
-def parse_csi_interleaved(record: dict[str, Any]) -> np.ndarray:
-    """Extract interleaved I/Q values from available CSI fields."""
-    for key in ("csi", "csi_iq", "csi_values"):
-        if key in record:
-            arr = parse_numeric_array(record[key])
-            if arr is not None and arr.size > 0:
-                return arr
-
-    bit_hint: int | None = None
-    for key in ("csi_bits", "iq_bits", "sample_bits"):
-        if key in record:
-            try:
-                bit_hint = int(record[key])
-                break
-            except (TypeError, ValueError):
-                pass
-
-    csi_len_hint: int | None = None
-    if "csi_len" in record:
-        try:
-            csi_len_hint = int(record["csi_len"])
-        except (TypeError, ValueError):
-            csi_len_hint = None
-
-    if "csi_iq_hex" in record and record["csi_iq_hex"] not in (None, ""):
-        raw_hex = str(record["csi_iq_hex"]).strip().replace(" ", "")
-        payload = bytes.fromhex(raw_hex)
-        return decode_payload_bytes(payload, csi_len_hint=csi_len_hint, bit_hint=bit_hint)
-
-    if "csi_iq_base64" in record and record["csi_iq_base64"] not in (None, ""):
-        raw_b64 = str(record["csi_iq_base64"]).strip()
-        try:
-            payload = base64.b64decode(raw_b64, validate=True)
-        except binascii.Error as exc:
-            raise ValueError(f"Invalid csi_iq_base64 payload: {exc}") from exc
-        return decode_payload_bytes(payload, csi_len_hint=csi_len_hint, bit_hint=bit_hint)
-
-    raise ValueError(
-        "Missing CSI payload. Expected one of csi/csi_iq/csi_values/csi_iq_hex/csi_iq_base64."
-    )
-
-
-def iter_records(file_path: Path) -> Iterator[dict[str, Any]]:
-    """Yield dict records from CSV or JSONL."""
-    if file_path.suffix.lower() == ".csv":
-        frame = pd.read_csv(file_path)
-        for row in frame.to_dict(orient="records"):
-            yield row
-        return
-
-    with file_path.open("r", encoding="utf-8", errors="replace") as handle:
-        for raw in handle:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                yield row
 
 
 def skewness_fisher(values: np.ndarray) -> float:
@@ -1074,6 +938,7 @@ def main() -> None:
     """CLI entrypoint."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
+    _require_runtime_stack()
     run(args)
 
 

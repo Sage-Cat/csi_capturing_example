@@ -27,6 +27,17 @@ from csi_capture.core.environment import (
     format_environment_banner,
     resolve_environment_profile,
 )
+from csi_capture.core.domain import (
+    AcquisitionBlock,
+    ExperimentDefinition,
+    Geometry,
+    GroundTruth,
+    RunManifest,
+    RunProvenance,
+    ScenarioRef,
+    TrialDefinition,
+)
+from csi_capture.core.layout import LAYOUT_LEGACY_DISTANCE_ANGLE_V1, build_run_layout
 
 
 SUPPORTED_EXPERIMENT_TYPES = {"distance", "angle"}
@@ -560,11 +571,61 @@ def _config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     return output
 
 
+def _experiment_definition(config: ExperimentConfig) -> ExperimentDefinition:
+    task_type = "regression" if config.experiment_type == "distance" else "localization"
+    summary = (
+        "Config-driven CSI/RSSI capture for distance estimation."
+        if config.experiment_type == "distance"
+        else "Config-driven CSI/RSSI capture for angular localization."
+    )
+    return ExperimentDefinition(
+        experiment_id=config.experiment_type,
+        display_name=config.experiment_type.replace("_", " ").title(),
+        summary=summary,
+        task_type=task_type,
+        modalities=("csi", "rssi", "fusion"),
+        layout_style=LAYOUT_LEGACY_DISTANCE_ANGLE_V1,
+        target_profile_id=config.target_profile.profile_id,
+        supports_capture=True,
+        supports_preprocess=False,
+        supports_train=False,
+        supports_evaluate=False,
+        supports_report=False,
+        supports_inspect=False,
+        config_modes=("capture",),
+    )
+
+
+def _scenario_ref(config: ExperimentConfig) -> ScenarioRef:
+    scenario_id = config.scenario_tags[0] if config.scenario_tags else "unlabeled"
+    return ScenarioRef(
+        scenario_id=scenario_id,
+        tags=tuple(config.scenario_tags),
+        room_id=config.environment.get("room_id") or None,
+        notes=config.environment.get("notes", ""),
+    )
+
+
+def _geometry(config: ExperimentConfig) -> Geometry | None:
+    if config.experiment_type != "angle":
+        return None
+    angle_geometry = config.angle_geometry or {}
+    angle_array = config.angle_array_config or {}
+    return Geometry(
+        coordinate_frame="angle_deg",
+        antenna_array=dict(angle_array),
+        measurement_positions=str(angle_geometry.get("measurement_positions") or ""),
+        orientation_reference=str(angle_geometry.get("orientation_reference") or ""),
+    )
+
+
 def _trial_metadata(
     config: ExperimentConfig, trial: TrialSpec, run_id: str, device_path: str
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "exp_id": config.exp_id,
+        "dataset_id": config.exp_id,
+        "experiment_id": config.experiment_type,
         "experiment_type": config.experiment_type,
         "target_profile": config.target_profile.profile_id,
         "run_id": run_id,
@@ -591,45 +652,87 @@ def _manifest_template(
     repo_root: Path,
 ) -> dict[str, Any]:
     git_meta = _git_info(repo_root)
-    return {
-        "exp_id": config.exp_id,
-        "experiment_type": config.experiment_type,
-        "target_profile": config.target_profile.profile_id,
-        "run_id": run_id,
-        "created_at_utc": _utc_now_iso(),
-        "status": "running",
-        "environment_profile": config.target_profile.to_dict(),
-        "device": {
-            "path": runtime_device.path,
-            "realpath": runtime_device.realpath,
-            "selection_source": runtime_device.source,
-            "baud": config.device.baud,
-            "timeout_s": config.device.timeout_s,
-            "reconnect_on_error": config.device.reconnect_on_error,
-            "reconnect_delay_s": config.device.reconnect_delay_s,
-        },
-        "scenario_tags": config.scenario_tags,
-        "environment": config.environment,
-        "capture": {
+    trial_defs = tuple(
+        TrialDefinition(
+            trial_id=trial.trial_id,
+            repeat_index=trial.repeat_index,
+            ground_truth=GroundTruth(dict(trial.ground_truth)),
+            scenario=_scenario_ref(config),
+            acquisition=AcquisitionBlock(
+                block_id=trial.trial_id,
+                modality="csi_rssi",
+                packet_budget=config.capture.packets_per_repeat,
+                duration_s=config.capture.duration_s,
+                output_format=config.capture.output_format,
+                notes="Legacy distance/angle capture trial.",
+            ),
+        )
+        for trial in config.trials
+    )
+    manifest = RunManifest(
+        experiment=_experiment_definition(config),
+        dataset_id=config.exp_id,
+        run_id=run_id,
+        status="running",
+        created_at_utc=_utc_now_iso(),
+        layout_style=LAYOUT_LEGACY_DISTANCE_ANGLE_V1,
+        scenario=_scenario_ref(config),
+        geometry=_geometry(config),
+        trials=trial_defs,
+        provenance=RunProvenance(
+            git_commit=git_meta["git_commit"],
+            git_dirty=git_meta["git_dirty"],
+            target_profile_id=config.target_profile.profile_id,
+            device_path=runtime_device.path,
+            device_realpath=runtime_device.realpath,
+            notes=config.environment.get("notes", ""),
+            tags=tuple(config.scenario_tags),
+        ),
+        capture={
             "output_format": config.capture.output_format,
             "packets_per_repeat": config.capture.packets_per_repeat,
             "duration_s": config.capture.duration_s,
             "inter_trial_pause_s": config.capture.inter_trial_pause_s,
             "wait_for_enter_between_trials": config.capture.wait_for_enter_between_trials,
         },
-        "angle": {
-            "array_config": config.angle_array_config,
-            "geometry": config.angle_geometry,
+        config_snapshot=config_snapshot,
+        extra={
+            "environment_profile": config.target_profile.to_dict(),
+            "analysis_status": "not_run",
+            "analysis_notes": "",
+            "resolved_config": _config_to_dict(config),
+        },
+    ).to_dict()
+    manifest.update(
+        {
+            "exp_id": config.exp_id,
+            "experiment_type": config.experiment_type,
+            "target_profile": config.target_profile.profile_id,
+            "environment_profile": config.target_profile.to_dict(),
+            "device": {
+                "path": runtime_device.path,
+                "realpath": runtime_device.realpath,
+                "selection_source": runtime_device.source,
+                "baud": config.device.baud,
+                "timeout_s": config.device.timeout_s,
+                "reconnect_on_error": config.device.reconnect_on_error,
+                "reconnect_delay_s": config.device.reconnect_delay_s,
+            },
+            "scenario_tags": config.scenario_tags,
+            "environment": config.environment,
+            "angle": {
+                "array_config": config.angle_array_config,
+                "geometry": config.angle_geometry,
+            }
+            if config.experiment_type == "angle"
+            else None,
+            "analysis_status": "not_run",
+            "analysis_notes": "",
+            **git_meta,
+            "resolved_config": _config_to_dict(config),
         }
-        if config.experiment_type == "angle"
-        else None,
-        "analysis_status": "not_run",
-        "analysis_notes": "",
-        **git_meta,
-        "config_snapshot": config_snapshot,
-        "resolved_config": _config_to_dict(config),
-        "trials": [],
-    }
+    )
+    return manifest
 
 
 def _write_manifest(manifest_path: Path, manifest: dict[str, Any]) -> None:
@@ -679,9 +782,16 @@ def run_raw_config(
     try:
         run_count = len(config.run_ids)
         for run_index, run_id in enumerate(config.run_ids, start=1):
-            run_dir = config.output_root / config.exp_id / config.experiment_type / f"run_{run_id}"
+            run_layout = build_run_layout(
+                root=config.output_root,
+                experiment_id=config.experiment_type,
+                dataset_id=config.exp_id,
+                run_id=run_id,
+                layout_style=LAYOUT_LEGACY_DISTANCE_ANGLE_V1,
+            )
+            run_dir = run_layout.run_dir
             run_dir.mkdir(parents=True, exist_ok=True)
-            manifest_path = run_dir / "manifest.json"
+            manifest_path = run_layout.manifest_path
             manifest = _manifest_template(
                 config=config,
                 run_id=run_id,
@@ -692,21 +802,16 @@ def run_raw_config(
             manifest["run_index"] = run_index
             manifest["run_count"] = run_count
 
-            trial_entries: list[dict[str, Any]] = []
-            for trial in config.trials:
-                trial_dir = run_dir / f"trial_{trial.trial_id}"
-                extension = "jsonl" if config.capture.output_format == "jsonl" else "csv"
-                out_file = trial_dir / f"capture.{extension}"
-                entry = {
-                    "trial_id": trial.trial_id,
-                    "repeat_index": trial.repeat_index,
-                    **trial.ground_truth,
-                    "output_file": str(out_file),
-                    "status": "pending",
-                    "records_captured": 0,
-                }
-                trial_entries.append(entry)
-            manifest["trials"] = trial_entries
+            for idx, trial in enumerate(config.trials):
+                paths = run_layout.trial_paths(trial.trial_id, output_format=config.capture.output_format)
+                entry = manifest["trials"][idx]
+                entry.update(
+                    {
+                        "output_file": str(paths.packet_path),
+                        "status": "pending",
+                        "records_captured": 0,
+                    }
+                )
             _write_manifest(manifest_path, manifest)
             active_manifest = manifest
             active_manifest_path = manifest_path
@@ -719,10 +824,10 @@ def run_raw_config(
 
             run_total_records = 0
             for idx, trial in enumerate(config.trials):
-                trial_dir = run_dir / f"trial_{trial.trial_id}"
+                paths = run_layout.trial_paths(trial.trial_id, output_format=config.capture.output_format)
+                trial_dir = paths.trial_dir
                 trial_dir.mkdir(parents=True, exist_ok=True)
-                extension = "jsonl" if config.capture.output_format == "jsonl" else "csv"
-                out_file = trial_dir / f"capture.{extension}"
+                out_file = paths.packet_path
                 trial_entry = manifest["trials"][idx]
                 trial_entry["status"] = "running"
                 trial_entry["started_at_utc"] = _utc_now_iso()

@@ -2,56 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from csi_capture.core.device import (
     DeviceAccessError,
-    format_device_banner,
     list_serial_candidates,
-    resolve_serial_device,
-    validate_serial_device_access,
 )
 from csi_capture.core.environment import (
     DEFAULT_ENVIRONMENT_PROFILE_ID,
     EnvironmentProfileError,
-    format_environment_banner,
     list_environment_profiles,
-    resolve_environment_profile,
-)
-from csi_capture.experiments.distance import run_distance_capture_config
-from csi_capture.experiments.static_sign_v1 import (
-    STATIC_SIGN_EXPERIMENT,
-    StaticSignError,
-    capture_static_sign_runs,
-    dry_run_capture,
-    evaluate_static_sign_model,
-    train_static_sign_model,
-    validate_static_sign_config,
 )
 from csi_capture.experiment import ExperimentConfigError
-
-
-def parse_duration_s(text: str) -> float:
-    value = text.strip().lower()
-    if not value:
-        raise ValueError("duration value is empty")
-    if value.endswith("ms"):
-        return float(value[:-2]) / 1000.0
-    if value.endswith("s"):
-        return float(value[:-1])
-    if value.endswith("m"):
-        return float(value[:-1]) * 60.0
-    if value.endswith("h"):
-        return float(value[:-1]) * 3600.0
-    return float(value)
-
-
-def _default_artifact_path(experiment: str, model: str) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return Path("artifacts") / experiment / stamp / f"{model}.pkl"
+from csi_capture.experiments import (
+    experiment_choices,
+    get_experiment,
+    iter_experiments,
+)
 
 
 def _print_list_devices() -> None:
@@ -83,6 +51,28 @@ def _print_list_target_profiles() -> None:
         print(f"- {profile.profile_id}: {profile.display_name} ({profile.board}, {profile.chip})")
 
 
+def _print_list_experiments() -> None:
+    plugins = iter_experiments()
+    if not plugins:
+        print("No experiments are registered.")
+        return
+
+    print("Registered experiments:")
+    for plugin in plugins:
+        definition = plugin.definition
+        capabilities = [
+            name
+            for name in ("capture", "train", "eval", "report", "inspect", "validate-config")
+            if plugin.supports(name)
+        ]
+        caps_text = ", ".join(capabilities) if capabilities else "metadata-only"
+        modalities = "/".join(definition.modalities)
+        print(
+            f"- {definition.experiment_id}: {definition.display_name} "
+            f"[task={definition.task_type}; modalities={modalities}; actions={caps_text}]"
+        )
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -91,138 +81,57 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def cmd_capture(args: argparse.Namespace) -> int:
-    if args.experiment != STATIC_SIGN_EXPERIMENT:
-        print(f"Error: unsupported experiment '{args.experiment}' for capture")
+def _dispatch_experiment_action(args: argparse.Namespace, action: str) -> int:
+    try:
+        plugin = get_experiment(args.experiment)
+    except KeyError as err:
+        print(f"Error: {err}")
         return 2
 
     try:
-        target_profile = resolve_environment_profile(args.target_profile)
-        print(format_environment_banner(target_profile))
-        device = resolve_serial_device(cli_device=args.device, env=os.environ)
-        print(format_device_banner(device))
-        validate_serial_device_access(device.path)
-
-        if args.dry_run_packets and args.dry_run_packets > 0:
-            max_wait_s = parse_duration_s(args.dry_run_timeout)
-            written = dry_run_capture(
-                device_path=device.path,
-                baud=args.baud,
-                packets=args.dry_run_packets,
-                timeout_s=args.timeout_s,
-                max_wait_s=max_wait_s,
-            )
-            print(f"Dry-run success. Parsed packets: {written}")
-            return 0
-
-        if not args.label:
-            print("Error: --label is required unless --dry-run-packets is used")
-            return 2
-
-        if args.packets_per_run is not None:
-            duration_s = None
+        if action == "capture":
+            handler = plugin.capture_handler
+        elif action == "train":
+            handler = plugin.train_handler
+        elif action == "eval":
+            handler = plugin.eval_handler
         else:
-            duration_s = parse_duration_s(args.duration) if args.duration else None
-        summaries = capture_static_sign_runs(
-            dataset_root=Path(args.dataset_root),
-            dataset_id=args.dataset_id,
-            label=args.label,
-            runs=args.runs,
-            duration_s=duration_s,
-            packets_per_run=args.packets_per_run,
-            device_path=device.path,
-            device_realpath=device.realpath,
-            baud=args.baud,
-            timeout_s=args.timeout_s,
-            subject_id=args.subject_id,
-            environment_id=args.environment_id,
-            notes=args.notes,
-            target_profile_id=target_profile.profile_id,
-        )
+            raise ValueError(f"Unsupported action dispatch: {action}")
+
+        if handler is None:
+            print(f"Error: experiment '{args.experiment}' does not support '{action}'")
+            return 2
+        return int(handler(args))
     except (
         ValueError,
         DeviceAccessError,
         EnvironmentProfileError,
         RuntimeError,
-        StaticSignError,
+        ExperimentConfigError,
     ) as err:
         print(f"Error: {err}")
         return 2
 
-    total = sum(item.records_captured for item in summaries)
-    print(f"Capture complete. runs={len(summaries)} total_records={total}")
-    for item in summaries:
-        print(f"- run_id={item.run_id} label={item.label} records={item.records_captured} dir={item.run_dir}")
-    return 0
+def cmd_capture(args: argparse.Namespace) -> int:
+    return _dispatch_experiment_action(args, "capture")
 
 
 def cmd_train(args: argparse.Namespace) -> int:
-    if args.experiment != STATIC_SIGN_EXPERIMENT:
-        print(f"Error: unsupported experiment '{args.experiment}' for train")
-        return 2
-
-    artifact = Path(args.artifact) if args.artifact else _default_artifact_path(args.experiment, args.model)
-    try:
-        window_s = parse_duration_s(args.window)
-        summary = train_static_sign_model(
-            dataset_path=Path(args.dataset),
-            model_name=args.model,
-            window_s=window_s,
-            overlap=args.overlap,
-            test_size=args.test_size,
-            random_seed=args.seed,
-            model_path=artifact,
-        )
-    except (ValueError, RuntimeError, StaticSignError) as err:
-        print(f"Error: {err}")
-        return 2
-
-    print(f"Model artifact: {summary.model_path}")
-    print(f"Metrics file: {summary.metrics_path}")
-    print(
-        "Train split metrics: "
-        f"accuracy={summary.metrics['accuracy']:.4f} "
-        f"precision={summary.metrics['precision']:.4f} "
-        f"recall={summary.metrics['recall']:.4f} "
-        f"f1={summary.metrics['f1']:.4f}"
-    )
-    return 0
+    return _dispatch_experiment_action(args, "train")
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    if args.experiment != STATIC_SIGN_EXPERIMENT:
-        print(f"Error: unsupported experiment '{args.experiment}' for eval")
-        return 2
-
-    try:
-        window_s = parse_duration_s(args.window) if args.window else None
-        summary = evaluate_static_sign_model(
-            dataset_path=Path(args.dataset),
-            model_path=Path(args.model),
-            report_path=Path(args.report),
-            window_s=window_s,
-            overlap=args.overlap,
-        )
-    except (ValueError, RuntimeError, StaticSignError) as err:
-        print(f"Error: {err}")
-        return 2
-
-    report = summary.report
-    print(f"Eval report: {summary.report_path}")
-    print(
-        "Metrics: "
-        f"accuracy={report['accuracy']:.4f} "
-        f"precision={report['precision']:.4f} "
-        f"recall={report['recall']:.4f} "
-        f"f1={report['f1']:.4f}"
-    )
-    print(f"Confusion matrix ({report['labels']}): {report['confusion_matrix']}")
-    return 0
+    return _dispatch_experiment_action(args, "eval")
 
 
 def cmd_validate_config(args: argparse.Namespace) -> int:
-    if args.experiment != STATIC_SIGN_EXPERIMENT:
-        print(f"Error: unsupported experiment '{args.experiment}' for validate-config")
+    try:
+        plugin = get_experiment(args.experiment)
+    except KeyError as err:
+        print(f"Error: {err}")
+        return 2
+    if plugin.validate_handler is None:
+        print(f"Error: experiment '{args.experiment}' does not support validate-config")
         return 2
 
     config_path = Path(args.config)
@@ -232,8 +141,8 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 
     try:
         payload = _load_json(config_path)
-        validate_static_sign_config(args.mode, payload)
-    except (ValueError, StaticSignError, json.JSONDecodeError) as err:
+        plugin.validate_handler(args.mode, payload)
+    except (ValueError, json.JSONDecodeError, ExperimentConfigError) as err:
         print(f"Error: {err}")
         return 2
 
@@ -242,19 +151,8 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 
 
 def cmd_distance(args: argparse.Namespace) -> int:
-    config_path = Path(args.config)
-    if not config_path.exists():
-        print(f"Error: config file does not exist: {config_path}")
-        return 2
-    try:
-        return run_distance_capture_config(
-            config_path,
-            device_override=args.device,
-            target_profile_override=args.target_profile,
-        )
-    except (ExperimentConfigError, EnvironmentProfileError, RuntimeError) as err:
-        print(f"Error: {err}")
-        return 2
+    args.experiment = "distance"
+    return cmd_capture(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -274,14 +172,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List available target environment profiles.",
     )
+    parser.add_argument(
+        "--list-experiments",
+        action="store_true",
+        help="List registered experiment families and supported actions.",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("list-devices", help="List serial candidates.")
     sub.add_parser("list-target-profiles", help="List available target environment profiles.")
+    sub.add_parser("list-experiments", help="List registered experiment families.")
 
     capture = sub.add_parser("capture", help="Capture labeled dataset runs.")
-    capture.add_argument("--experiment", required=True, help="Experiment name (static_sign_v1)")
+    capture.add_argument(
+        "--experiment",
+        required=True,
+        choices=experiment_choices(),
+        help="Experiment name.",
+    )
+    capture.add_argument("--config", default=None, help="Experiment config JSON when applicable.")
     capture.add_argument("--label", default=None, help="Label (baseline or hands_up)")
     capture.add_argument("--runs", type=int, default=1, help="Number of runs to capture")
     capture.add_argument(
@@ -314,9 +224,91 @@ def build_parser() -> argparse.ArgumentParser:
         default="10s",
         help="Maximum wait duration for dry-run packet sampling",
     )
+    capture.add_argument(
+        "--exp-id",
+        default=None,
+        help="Angle CLI mode experiment id when --config is omitted.",
+    )
+    capture.add_argument("--run-id", default=None, help="Optional single run id for angle CLI mode.")
+    capture.add_argument(
+        "--run-ids",
+        nargs="+",
+        default=None,
+        help="Optional explicit run ids for angle CLI mode.",
+    )
+    capture.add_argument("--angles", nargs="+", default=None, help="Angle list for angle CLI mode.")
+    capture.add_argument(
+        "--repeats-per-angle",
+        type=int,
+        default=1,
+        help="Repeats per angle for angle CLI mode.",
+    )
+    capture.add_argument(
+        "--packets-per-repeat",
+        type=int,
+        default=None,
+        help="Packets per angle trial for angle CLI mode.",
+    )
+    capture.add_argument(
+        "--duration-s",
+        type=float,
+        default=None,
+        help="Duration per angle trial in seconds for angle CLI mode.",
+    )
+    capture.add_argument(
+        "--output-format",
+        choices=("jsonl", "csv"),
+        default="jsonl",
+        help="Capture output format for angle CLI mode.",
+    )
+    capture.add_argument(
+        "--inter-trial-pause-s",
+        type=float,
+        default=0.0,
+        help="Pause between angle trials in seconds.",
+    )
+    capture.add_argument(
+        "--wait-enter",
+        action="store_true",
+        help="Pause between angle trials and wait for Enter.",
+    )
+    capture.add_argument(
+        "--scenario-tags",
+        nargs="+",
+        default=None,
+        help="Scenario tags for angle CLI mode.",
+    )
+    capture.add_argument("--room-id", default="", help="Room identifier for angle CLI mode.")
+    capture.add_argument("--num-antennas", type=int, default=1, help="Angle array antenna count.")
+    capture.add_argument(
+        "--antenna-spacing-m",
+        type=float,
+        default=None,
+        help="Angle array antenna spacing in meters.",
+    )
+    capture.add_argument(
+        "--orientation-reference",
+        default="0 deg points from receiver front toward AP",
+        help="Geometry metadata for angle CLI mode.",
+    )
+    capture.add_argument(
+        "--measurement-positions",
+        default="AP fixed in center, receiver moved between angle marks",
+        help="Measurement geometry notes for angle CLI mode.",
+    )
+    capture.add_argument(
+        "--output-root",
+        default="experiments",
+        help="Output root for config-driven or angle CLI capture.",
+    )
 
     train = sub.add_parser("train", help="Train model for an experiment dataset.")
-    train.add_argument("--experiment", required=True, help="Experiment name (static_sign_v1)")
+    train.add_argument(
+        "--experiment",
+        required=True,
+        choices=experiment_choices(),
+        help="Experiment name.",
+    )
     train.add_argument("--dataset", required=True, help="Dataset directory path")
     train.add_argument("--model", default="svm_linear", help="Model name: svm_linear or logreg")
     train.add_argument("--window", default="1s", help="Feature window duration")
@@ -326,7 +318,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--artifact", default=None, help="Output model artifact path")
 
     eval_parser = sub.add_parser("eval", help="Evaluate a trained model.")
-    eval_parser.add_argument("--experiment", required=True, help="Experiment name (static_sign_v1)")
+    eval_parser.add_argument(
+        "--experiment",
+        required=True,
+        choices=experiment_choices(),
+        help="Experiment name.",
+    )
     eval_parser.add_argument("--dataset", required=True, help="Dataset directory path")
     eval_parser.add_argument("--model", required=True, help="Model artifact path")
     eval_parser.add_argument("--report", required=True, help="Output report JSON path")
@@ -334,8 +331,13 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--overlap", type=float, default=None, help="Optional overlap override")
 
     validate = sub.add_parser("validate-config", help="Validate experiment config JSON")
-    validate.add_argument("--experiment", required=True, help="Experiment name")
-    validate.add_argument("--mode", required=True, choices=("capture", "train", "eval"))
+    validate.add_argument(
+        "--experiment",
+        required=True,
+        choices=experiment_choices(),
+        help="Experiment name.",
+    )
+    validate.add_argument("--mode", required=True, choices=("capture", "train", "eval", "report"))
     validate.add_argument("--config", required=True, help="Config JSON path")
 
     distance = sub.add_parser("distance", help="Compatibility adapter to distance capture config")
@@ -360,6 +362,9 @@ def main() -> int:
     if args.list_target_profiles:
         _print_list_target_profiles()
         return 0
+    if args.list_experiments:
+        _print_list_experiments()
+        return 0
 
     if args.command is None:
         parser.print_help()
@@ -370,6 +375,9 @@ def main() -> int:
         return 0
     if args.command == "list-target-profiles":
         _print_list_target_profiles()
+        return 0
+    if args.command == "list-experiments":
+        _print_list_experiments()
         return 0
     if args.command == "capture":
         return cmd_capture(args)

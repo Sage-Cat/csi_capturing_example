@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 import numpy as np
-from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
 
 def classification_metrics(
@@ -11,6 +10,8 @@ def classification_metrics(
     y_pred: Sequence[str],
     labels: Sequence[str],
 ) -> dict[str, Any]:
+    from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
+
     y_true_arr = np.asarray(list(y_true), dtype=object)
     y_pred_arr = np.asarray(list(y_pred), dtype=object)
 

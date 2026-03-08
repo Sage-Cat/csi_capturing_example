@@ -5,17 +5,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import LinearSVC
-
 
 class ModelError(RuntimeError):
     """Raised for model creation/load/save issues."""
 
 
-def create_classifier(model_name: str) -> Pipeline:
+def create_classifier(model_name: str):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.svm import LinearSVC
+
     normalized = model_name.strip().lower()
     if normalized in {"svm_linear", "linear_svm", "svm"}:
         estimator = LinearSVC(random_state=42)
@@ -32,7 +32,7 @@ def create_classifier(model_name: str) -> Pipeline:
     )
 
 
-def save_model_artifact(path: Path, model: Pipeline, metadata: dict[str, Any]) -> None:
+def save_model_artifact(path: Path, model: Any, metadata: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "created_at_utc": datetime.now(timezone.utc)

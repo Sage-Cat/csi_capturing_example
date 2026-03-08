@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,18 +12,41 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GroupShuffleSplit
 
 from csi_capture.capture import capture_stream, serial_lines
 from csi_capture.core.dataset import RunCapture, load_static_sign_runs
+from csi_capture.core.device import (
+    DeviceAccessError,
+    format_device_banner,
+    resolve_serial_device,
+    validate_serial_device_access,
+)
+from csi_capture.core.domain import (
+    AcquisitionBlock,
+    ExperimentDefinition,
+    GroundTruth,
+    LabelSet,
+    RunManifest,
+    RunProvenance,
+    ScenarioRef,
+    SubjectRef,
+    TrialDefinition,
+)
 from csi_capture.core.evaluation import classification_metrics, per_run_summary
 from csi_capture.core.features import extract_window_features
 from csi_capture.core.environment import (
     DEFAULT_ENVIRONMENT_PROFILE_ID,
     EnvironmentProfileError,
+    format_environment_banner,
     resolve_environment_profile,
 )
+from csi_capture.core.layout import (
+    DEFAULT_ARTIFACT_ROOT,
+    LAYOUT_LEGACY_STATIC_SIGN_V1,
+    build_run_layout,
+)
 from csi_capture.core.models import create_classifier, load_model_artifact, save_model_artifact
+from csi_capture.experiments.registry import ExperimentPlugin
 
 STATIC_SIGN_EXPERIMENT = "static_sign_v1"
 STATIC_SIGN_LABELS = ("baseline", "hands_up")
@@ -52,6 +77,21 @@ class EvalSummary:
     report: dict[str, Any]
 
 
+def parse_duration_s(text: str) -> float:
+    value = text.strip().lower()
+    if not value:
+        raise ValueError("duration value is empty")
+    if value.endswith("ms"):
+        return float(value[:-2]) / 1000.0
+    if value.endswith("s"):
+        return float(value[:-1])
+    if value.endswith("m"):
+        return float(value[:-1]) * 60.0
+    if value.endswith("h"):
+        return float(value[:-1]) * 3600.0
+    return float(value)
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -79,6 +119,36 @@ def _ensure_dataset_id(dataset_id: str | None) -> str:
     if dataset_id and dataset_id.strip():
         return dataset_id.strip()
     return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def _experiment_definition() -> ExperimentDefinition:
+    return ExperimentDefinition(
+        experiment_id=STATIC_SIGN_EXPERIMENT,
+        display_name="Static Gesture / Static Sign v1",
+        summary="Binary hands-up vs baseline classifier built on ESP32 CSI/RSSI windows.",
+        task_type="classification",
+        modalities=("csi", "rssi", "fusion"),
+        layout_style=LAYOUT_LEGACY_STATIC_SIGN_V1,
+        target_profile_id=DEFAULT_ENVIRONMENT_PROFILE_ID,
+        supports_capture=True,
+        supports_preprocess=True,
+        supports_train=True,
+        supports_evaluate=True,
+        supports_report=False,
+        supports_inspect=False,
+        config_modes=("capture", "train", "eval"),
+        label_set=LabelSet(
+            label_set_id="static_sign_binary_v1",
+            task_type="classification",
+            labels=STATIC_SIGN_LABELS,
+            positive_label="hands_up",
+        ),
+    )
+
+
+def _default_model_artifact_path(model_name: str) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return DEFAULT_ARTIFACT_ROOT / STATIC_SIGN_EXPERIMENT / stamp / f"{model_name}.pkl"
 
 
 def dry_run_capture(
@@ -154,24 +224,42 @@ def capture_static_sign_runs(
         raise StaticSignError("packets_per_run must be > 0")
 
     summaries: list[CaptureSummary] = []
-    exp_root = dataset_root / STATIC_SIGN_EXPERIMENT / dataset_id_norm / label_norm
-    exp_root.mkdir(parents=True, exist_ok=True)
+    definition = _experiment_definition()
+    scenario = ScenarioRef(
+        scenario_id=label_norm,
+        tags=(label_norm,),
+        room_id=environment_id,
+        notes=notes or "",
+    )
+    subject = SubjectRef(subject_id=subject_id)
 
     for run_idx in range(1, runs + 1):
         run_id = f"{_new_run_id()}_{run_idx:03d}"
-        run_dir = exp_root / f"run_{run_id}"
+        run_layout = build_run_layout(
+            root=dataset_root,
+            experiment_id=STATIC_SIGN_EXPERIMENT,
+            dataset_id=dataset_id_norm,
+            run_id=run_id,
+            layout_style=LAYOUT_LEGACY_STATIC_SIGN_V1,
+            label=label_norm,
+        )
+        run_dir = run_layout.run_dir
         run_dir.mkdir(parents=True, exist_ok=False)
 
         start_time = _utc_now_iso()
-        frames_path = run_dir / "frames.jsonl"
+        frames_path = run_layout.trial_paths("capture", output_format="jsonl").packet_path
 
         packet_metadata = {
             "experiment_name": STATIC_SIGN_EXPERIMENT,
+            "experiment_type": STATIC_SIGN_EXPERIMENT,
+            "dataset_id": dataset_id_norm,
             "label": label_norm,
             "run_id": run_id,
+            "trial_id": "capture",
             "target_profile": target_profile.profile_id,
             "subject_id": subject_id,
             "environment_id": environment_id,
+            "scenario_tags": [label_norm],
         }
         packet_metadata = {k: v for k, v in packet_metadata.items() if v is not None}
 
@@ -230,6 +318,68 @@ def capture_static_sign_runs(
         }
         (run_dir / "metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        trial = TrialDefinition(
+            trial_id="capture",
+            repeat_index=1,
+            ground_truth=GroundTruth({"label": label_norm}),
+            scenario=scenario,
+            subject=subject,
+            acquisition=AcquisitionBlock(
+                block_id="capture",
+                modality="csi_rssi",
+                packet_budget=packets_per_run,
+                duration_s=duration_s,
+                output_format="jsonl",
+                notes="Legacy static_sign_v1 single-trial capture block.",
+            ),
+            labels=definition.label_set,
+            notes=notes or "",
+        )
+        manifest = RunManifest(
+            experiment=definition,
+            dataset_id=dataset_id_norm,
+            run_id=run_id,
+            status="completed",
+            created_at_utc=start_time,
+            layout_style=LAYOUT_LEGACY_STATIC_SIGN_V1,
+            scenario=scenario,
+            subject=subject,
+            trials=(trial,),
+            provenance=RunProvenance(
+                target_profile_id=target_profile.profile_id,
+                device_path=device_path,
+                device_realpath=device_realpath,
+                notes=notes or "",
+                tags=(label_norm,),
+            ),
+            capture={
+                "output_format": "jsonl",
+                "duration_s": duration_s,
+                "packets_per_run": packets_per_run,
+                "baud": baud,
+                "timeout_s": timeout_s,
+            },
+            config_snapshot={
+                "dataset_root": str(dataset_root),
+                "dataset_id": dataset_id_norm,
+                "label": label_norm,
+                "runs": runs,
+            },
+            extra={
+                "records_captured": written,
+                "ended_at_utc": end_time,
+                "metadata_path": str(run_dir / "metadata.json"),
+                "packet_path": str(frames_path),
+                "environment_profile": target_profile.to_dict(),
+                "device": target_profile.board,
+                "chip": target_profile.chip,
+            },
+        )
+        (run_dir / "manifest.json").write_text(
+            json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
 
         summaries.append(
@@ -295,6 +445,8 @@ def _group_split(
     test_size: float,
     random_seed: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    from sklearn.model_selection import GroupShuffleSplit
+
     groups = frame["run_id"].astype(str)
     unique_groups = groups.nunique()
 
@@ -431,3 +583,133 @@ def validate_static_sign_config(mode: str, config: dict[str, Any]) -> None:
             raise StaticSignError("eval config model_artifact is required")
     else:
         raise StaticSignError("mode must be one of: capture, train, eval")
+
+
+def handle_capture(args: argparse.Namespace) -> int:
+    try:
+        target_profile = resolve_environment_profile(args.target_profile)
+        print(format_environment_banner(target_profile))
+        device = resolve_serial_device(cli_device=args.device, env=os.environ)
+        print(format_device_banner(device))
+        validate_serial_device_access(device.path)
+
+        if args.dry_run_packets and args.dry_run_packets > 0:
+            max_wait_s = parse_duration_s(args.dry_run_timeout)
+            written = dry_run_capture(
+                device_path=device.path,
+                baud=args.baud,
+                packets=args.dry_run_packets,
+                timeout_s=args.timeout_s,
+                max_wait_s=max_wait_s,
+            )
+            print(f"Dry-run success. Parsed packets: {written}")
+            return 0
+
+        if not args.label:
+            print("Error: --label is required unless --dry-run-packets is used")
+            return 2
+
+        if args.packets_per_run is not None:
+            duration_s = None
+        else:
+            duration_s = parse_duration_s(args.duration) if args.duration else None
+        summaries = capture_static_sign_runs(
+            dataset_root=Path(args.dataset_root),
+            dataset_id=args.dataset_id,
+            label=args.label,
+            runs=args.runs,
+            duration_s=duration_s,
+            packets_per_run=args.packets_per_run,
+            device_path=device.path,
+            device_realpath=device.realpath,
+            baud=args.baud,
+            timeout_s=args.timeout_s,
+            subject_id=args.subject_id,
+            environment_id=args.environment_id,
+            notes=args.notes,
+            target_profile_id=target_profile.profile_id,
+        )
+    except (
+        ValueError,
+        DeviceAccessError,
+        EnvironmentProfileError,
+        RuntimeError,
+        StaticSignError,
+    ) as err:
+        print(f"Error: {err}")
+        return 2
+
+    total = sum(item.records_captured for item in summaries)
+    print(f"Capture complete. runs={len(summaries)} total_records={total}")
+    for item in summaries:
+        print(f"- run_id={item.run_id} label={item.label} records={item.records_captured} dir={item.run_dir}")
+    return 0
+
+
+def handle_train(args: argparse.Namespace) -> int:
+    artifact = Path(args.artifact) if args.artifact else _default_model_artifact_path(args.model)
+    try:
+        window_s = parse_duration_s(args.window)
+        summary = train_static_sign_model(
+            dataset_path=Path(args.dataset),
+            model_name=args.model,
+            window_s=window_s,
+            overlap=args.overlap,
+            test_size=args.test_size,
+            random_seed=args.seed,
+            model_path=artifact,
+        )
+    except (ValueError, RuntimeError, StaticSignError) as err:
+        print(f"Error: {err}")
+        return 2
+
+    print(f"Model artifact: {summary.model_path}")
+    print(f"Metrics file: {summary.metrics_path}")
+    print(
+        "Train split metrics: "
+        f"accuracy={summary.metrics['accuracy']:.4f} "
+        f"precision={summary.metrics['precision']:.4f} "
+        f"recall={summary.metrics['recall']:.4f} "
+        f"f1={summary.metrics['f1']:.4f}"
+    )
+    return 0
+
+
+def handle_eval(args: argparse.Namespace) -> int:
+    try:
+        window_s = parse_duration_s(args.window) if args.window else None
+        summary = evaluate_static_sign_model(
+            dataset_path=Path(args.dataset),
+            model_path=Path(args.model),
+            report_path=Path(args.report),
+            window_s=window_s,
+            overlap=args.overlap,
+        )
+    except (ValueError, RuntimeError, StaticSignError) as err:
+        print(f"Error: {err}")
+        return 2
+
+    report = summary.report
+    print(f"Eval report: {summary.report_path}")
+    print(
+        "Metrics: "
+        f"accuracy={report['accuracy']:.4f} "
+        f"precision={report['precision']:.4f} "
+        f"recall={report['recall']:.4f} "
+        f"f1={report['f1']:.4f}"
+    )
+    print(f"Confusion matrix ({report['labels']}): {report['confusion_matrix']}")
+    return 0
+
+
+STATIC_SIGN_PLUGIN = ExperimentPlugin(
+    definition=_experiment_definition(),
+    capture_handler=handle_capture,
+    train_handler=handle_train,
+    eval_handler=handle_eval,
+    validate_handler=validate_static_sign_config,
+    examples=(
+        "tools/exp capture --experiment static_sign_v1 --label baseline --runs 5 --duration 20s",
+        "tools/exp train --experiment static_sign_v1 --dataset data/experiments/static_sign_v1/20260302 --model svm_linear",
+    ),
+)

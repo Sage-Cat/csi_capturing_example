@@ -97,6 +97,10 @@ Current baseline profile:
 
 - `esp32s3_csi_v1`
 
+Architecture/refactor blueprint:
+
+- `docs/platform_refactor_blueprint.md`
+
 ## 4) Capture Commands
 
 TX node:
@@ -195,6 +199,9 @@ New experiment framework CLI (includes `static_sign_v1`):
 # List available target environment profiles
 ./tools/exp --list-target-profiles
 
+# List registered experiment families and supported actions
+./tools/exp --list-experiments
+
 # Dry-run: open serial and parse N CSI packets, then exit
 ./tools/exp capture --experiment static_sign_v1 --target-profile esp32s3_csi_v1 --dry-run-packets 5 --dry-run-timeout 10s
 
@@ -211,6 +218,12 @@ New experiment framework CLI (includes `static_sign_v1`):
   --duration 20s \
   --subject-id subject01 \
   --environment-id labA
+
+# Validate future-ready config shape for a new experiment family
+./tools/exp validate-config \
+  --experiment presence_v1 \
+  --mode capture \
+  --config docs/configs/presence_v1.capture.sample.json
 ```
 
 Device selection precedence for `tools/exp capture`:
